@@ -1,0 +1,22 @@
+services:
+  droppedneedle:
+    volumes:
+      - ./.cassette-event-sync/plugin:/app/plugins/cassette-profile-events:ro
+  cassette-event-sync:
+    build: ./.cassette-event-sync/worker
+    container_name: cassette-event-sync
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    env_file: ./.cassette-event-sync/worker.env
+    volumes:
+      - cassette-event-sync-data:/state
+      - ./.cassette-event-sync/profiles.json:/state/profiles.json:ro
+    networks:
+      - cassette-bridge-network
+networks:
+  cassette-bridge-network:
+    external: true
+    name: music-requests-mac_music-request
+volumes:
+  cassette-event-sync-data:

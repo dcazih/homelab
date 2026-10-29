@@ -1,0 +1,23 @@
+[plugin]
+name = "cassette-profile-events"
+display_name = "Cassette Profile Sync Events"
+version = "1.0.0"
+api_version = 1
+entrypoint = "plugin:CassetteProfileEvents"
+capabilities = ["subscriber"]
+description = "Notify local Bridge sync receiver after a completed DroppedNeedle import."
+author = "Family Music"
+
+[[capability]]
+id = "subscriber"
+
+[[settings]]
+key = "receiver_url"
+label = "Private receiver URL"
+help = "Internal Docker URL: http://cassette-event-sync:8791/event"
+
+[[settings]]
+key = "shared_secret"
+label = "Receiver shared secret"
+help = "Paste the shared secret printed by the patch installer. Never post it in chat."
+secret = true

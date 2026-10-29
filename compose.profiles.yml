@@ -1,0 +1,29 @@
+services:
+  music-profiles:
+    build: ./profiles
+    image: music-profiles-bridge:2.0-local
+    container_name: music-profiles
+    environment:
+      NAVIDROME_URL: http://host.docker.internal:4533
+      DROPPEDNEEDLE_URL: http://droppedneedle:8688
+      PROFILE_DB: /data/profiles.db
+      PROFILE_ADMIN_KEY: ${PROFILE_ADMIN_KEY:?Set PROFILE_ADMIN_KEY in .env}
+      PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY:?Set PROFILE_ENCRYPTION_KEY in .env}
+      BRIDGE_POLL_SECONDS: ${BRIDGE_POLL_SECONDS:-90}
+      BRIDGE_DAILY_REQUEST_LIMIT: ${BRIDGE_DAILY_REQUEST_LIMIT:-50}
+      BRIDGE_MUSICBRAINZ_USER_AGENT: ${BRIDGE_MUSICBRAINZ_USER_AGENT:-FamilyMusicBridge/2.0 (private self-hosted)}
+    ports:
+      - '127.0.0.1:8765:8765'
+    volumes:
+      - profiles-data:/data
+    networks:
+      - music-request
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+volumes:
+  profiles-data:

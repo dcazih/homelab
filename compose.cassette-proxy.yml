@@ -1,0 +1,19 @@
+# Overlay for an existing music-requests-mac/compose.yml
+# Safe to run alongside your Gluetun, slskd, DroppedNeedle, and Music Profiles.
+services:
+  cassette-proxy:
+    build: ./cassette-proxy
+    image: cassette-proxy:stage1
+    container_name: music-cassette-proxy
+    environment:
+      NAVIDROME_UPSTREAM: http://host.docker.internal:4533
+    ports:
+      - "127.0.0.1:8787:8787"
+    networks:
+      - music-request
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

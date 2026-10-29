@@ -1,0 +1,4 @@
+services:
+  droppedneedle:
+    image: cassette-dn-compact-base:6d58d829cc5a
+    pull_policy: never

@@ -1,0 +1,5 @@
+fastapi==0.128.2
+uvicorn==0.48.0
+httpx==0.28.1
+rapidfuzz>=3.10,<4
+symspellpy>=6.7,<7

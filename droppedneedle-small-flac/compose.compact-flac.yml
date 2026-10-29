@@ -1,0 +1,7 @@
+services:
+  droppedneedle:
+    image: cassette-dn-compact-flac:6d58d829cc5a
+    pull_policy: never
+    build:
+      context: "/Users/squarescan/Downloads/music-requests-mac/droppedneedle-small-flac"
+      dockerfile: Dockerfile

@@ -1,0 +1,16 @@
+services:
+  muse-music:
+    build: ./muse-music-connector
+    image: family-muse-music:stage2
+    container_name: muse-music
+    restart: unless-stopped
+    env_file: ./muse-music.env
+    environment:
+      BRIDGE_URL: http://music-profiles:8765
+      STAGE2_DB: /data/stage2.sqlite3
+    volumes:
+      - muse_music_data:/data
+    ports:
+      - "127.0.0.1:8788:8788"
+volumes:
+  muse_music_data:

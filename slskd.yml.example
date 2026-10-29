@@ -1,0 +1,27 @@
+# Copy this file to slskd/slskd.yml and fill in YOUR credentials.
+# The path inside Docker differs from the macOS native slskd config.
+soulseek:
+  username: "REPLACE_SOULSEEK_USERNAME"
+  password: "REPLACE_SOULSEEK_PASSWORD"
+  listen_ip_address: 0.0.0.0
+  listen_port: 32740
+
+web:
+  ip_address: 0.0.0.0
+  port: 5030
+  https:
+    disabled: true
+  authentication:
+    username: "admin"
+    password: "REPLACE_WITH_UNIQUE_WEB_PASSWORD"
+    api_keys:
+      droppedneedle:
+        key: "REPLACE_WITH_RANDOM_KEY"
+
+# Only place files you are permitted to share in this directory.
+shares:
+  directories:
+    - /media/_automation/share
+
+directories:
+  downloads: /media/_automation/slskd-downloads

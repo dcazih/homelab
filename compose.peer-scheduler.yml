@@ -1,0 +1,16 @@
+services:
+  droppedneedle:
+    environment:
+      PEER_SCHEDULER_ENABLED: 'true'
+      PEER_SCHEDULER_DB: /peer-scheduler-data/scheduler.sqlite
+    volumes:
+      - peer-scheduler-data:/peer-scheduler-data
+  music-profiles:
+    environment:
+      PEER_SCHEDULER_DB: /peer-scheduler-data/scheduler.sqlite
+    volumes:
+      - peer-scheduler-data:/peer-scheduler-data
+volumes:
+  peer-scheduler-data:
+    external: true
+    name: music-requests-mac_peer-scheduler-data

@@ -1,0 +1,10 @@
+services:
+  muse-music:
+    networks:
+      - default
+      - bridge_network
+
+networks:
+  bridge_network:
+    external: true
+    name: music-requests-mac_music-request

@@ -1,0 +1,10 @@
+@font-face{font-family:BridgeGeist;src:url('/__DROPPEDNEEDLE_BASE__/fonts/peer-ui/geist.ttf') format('truetype');font-weight:100 900;font-display:swap}
+@font-face{font-family:BridgeInter;src:url('/__DROPPEDNEEDLE_BASE__/fonts/peer-ui/inter.ttf') format('truetype');font-weight:100 900;font-display:swap}
+@font-face{font-family:BridgeMono;src:url('/__DROPPEDNEEDLE_BASE__/fonts/peer-ui/geist-mono.ttf') format('truetype');font-weight:100 900;font-display:swap}
+@font-face{font-family:BridgeSerif;src:url('/__DROPPEDNEEDLE_BASE__/fonts/peer-ui/instrument-serif.ttf') format('truetype');font-weight:400;font-display:swap}
+body,body *{font-family:BridgeInter,Inter,sans-serif!important}
+body :is(h1,h2,h3,h4,h5,h6,button,[role=tab]){font-family:BridgeGeist,system-ui,sans-serif!important}
+body :is(pre,code,kbd,samp){font-family:BridgeMono,monospace!important}
+
+@font-face{font-family:BridgeSora;src:url('/__DROPPEDNEEDLE_BASE__/fonts/peer-ui/sora.ttf') format('truetype');font-weight:100 800;font-display:swap}
+body :is(h2,h3){font-family:BridgeSora,sans-serif!important}

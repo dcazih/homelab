@@ -1,0 +1,65 @@
+# Mac mini starter stack: keep Navidrome running natively.
+# DroppedNeedle runs OUTSIDE AirVPN; only slskd joins Gluetun's VPN namespace.
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: music-gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: airvpn
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${AIRVPN_WG_PRIVATE_KEY:?Set AIRVPN_WG_PRIVATE_KEY in .env}
+      WIREGUARD_PRESHARED_KEY: ${AIRVPN_WG_PRESHARED_KEY:?Set AIRVPN_WG_PRESHARED_KEY in .env}
+      WIREGUARD_ADDRESSES: ${AIRVPN_WG_ADDRESSES:?Set AIRVPN_WG_ADDRESSES in .env}
+      SERVER_COUNTRIES: ${AIRVPN_COUNTRY:-Canada}
+      FIREWALL_VPN_INPUT_PORTS: "32740"
+      FIREWALL_INPUT_PORTS: "5030"
+      TZ: ${TZ:-America/Toronto}
+    ports:
+      # The slskd web API is accessible on the Mac, not the public Internet.
+      - "127.0.0.1:5030:5030/tcp"
+    networks:
+      - music-request
+    restart: unless-stopped
+
+  slskd:
+    image: slskd/slskd:0.26.2
+    container_name: music-slskd
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    user: "${HOST_UID:?Set HOST_UID in .env}:${HOST_GID:?Set HOST_GID in .env}"
+    volumes:
+      - ./slskd:/app:rw
+      - ${HOST_MUSIC_ROOT:?Set HOST_MUSIC_ROOT in .env}:/media:rw
+    restart: unless-stopped
+
+  droppedneedle:
+    image: droppedneedle/droppedneedle:latest
+    container_name: music-requests
+    environment:
+      PUID: ${HOST_UID:?Set HOST_UID in .env}
+      PGID: ${HOST_GID:?Set HOST_GID in .env}
+      TZ: ${TZ:-America/Toronto}
+      PORT: "8688"
+      SLSKD_DOWNLOADS_PATH: /media/_automation/slskd-downloads
+    ports:
+      # Tailscale Serve can forward to localhost:8688.
+      - "127.0.0.1:8688:8688/tcp"
+    volumes:
+      - ./droppedneedle/config:/app/config:rw
+      - ./droppedneedle/cache:/app/cache:rw
+      # One common bind mount keeps download and library paths on the same mount.
+      - ${HOST_MUSIC_ROOT:?Set HOST_MUSIC_ROOT in .env}:/media:rw
+    networks:
+      - music-request
+    depends_on:
+      - gluetun
+    restart: unless-stopped
+
+networks:
+  music-request:
+    driver: bridge

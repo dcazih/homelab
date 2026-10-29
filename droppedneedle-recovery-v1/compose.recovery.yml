@@ -1,0 +1,7 @@
+services:
+  droppedneedle:
+    image: cassette-dn-recovery-v1:c3dd5cd127b3
+    pull_policy: never
+    build:
+      context: "/Users/squarescan/Downloads/music-requests-mac/droppedneedle-recovery-v1"
+      dockerfile: Dockerfile

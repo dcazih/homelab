@@ -1,0 +1,4 @@
+services:
+  droppedneedle:
+    image: cassette-dn-recovery-base:c3dd5cd127b3
+    pull_policy: never
