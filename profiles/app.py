@@ -684,7 +684,7 @@ async def live_request_status(user=Depends(require_user)):
             active.raise_for_status();history.raise_for_status()
             remote={}
             for item in (history.json().get('items') or [])+(active.json().get('items') or []):
-                if isinstance(item,dict):remote[(str(item.get('request_kind') or 'album'),str(item.get('musicbrainz_id') or '').lower())]=item
+                if isinstance(item,dict):remote[({'song':'track','track':'track','album':'album'}.get(str(item.get('request_kind') or 'album').lower(),str(item.get('request_kind') or 'album').lower()),str(item.get('musicbrainz_id') or '').lower())]=item
         labels={'awaiting_approval':'Awaiting approval','pending':'Queued','queued':'Queued','searching':'Searching','downloading':'Downloading','processing':'Processing','importing':'Importing','completed':'Completed','imported':'Imported','failed':'Failed','cancelled':'Cancelled','rejected':'Rejected'}
         for row in requests:
             if row['state'] not in waiting or not row['mbid']:continue
@@ -694,7 +694,7 @@ async def live_request_status(user=Depends(require_user)):
             label=labels.get(raw,raw.replace('_',' ').capitalize()) if raw else ''
             if not label:continue
             detail=item.get('error_message') if raw=='failed' else None
-            progress=item.get('progress')
+            progress=item.get('progress_percent',item.get('progress'))
             if isinstance(progress,(int,float)) and not isinstance(progress,bool) and 0<=progress<=100:
                 detail=f'{progress:.0f}%'
             if raw in ('imported','completed'):detail='Waiting for Navidrome to confirm and save'
@@ -762,7 +762,8 @@ async def live_request_events(user=Depends(require_user)):
                             elif line.startswith('event:'):event=line[6:].strip()
                             elif line.startswith('data:'):data.append(line[5:].lstrip())
                 except (httpx.HTTPError,ValueError):
-                    await queue.put({'kind':kind,'id':request_id,'text':'Status connection interrupted; reconnecting'})
+                    # Keep the last delivered transfer state visible while the stream reconnects.
+                    pass
                 reconnecting=True
                 await asyncio.sleep(5)
         async def consume_global(client):

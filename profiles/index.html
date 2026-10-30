@@ -267,19 +267,21 @@ function prepareIslandStacking(){
   [...islandGrid.children].forEach(section=>{observer.observe(section);update(section)});
 }
 async function updateFooterStatus(){const status=document.getElementById('footer-status'),label=document.getElementById('footer-status-text');try{const response=await fetch('/health',{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!response.ok||(await response.json()).status!=='ok')throw Error('Bridge unavailable');status.classList.add('online');label.textContent='Bridge online'}catch{status.classList.remove('online');label.textContent='Bridge unavailable'}}
-let requestEventController=null,requestReconnectTimer=null;
-function applyRequestStatus(item){const el=[...document.querySelectorAll('[data-request-status]')].find(node=>node.dataset.requestStatus===item.kind+':'+item.id);if(el&&el.textContent!==item.text)el.textContent=item.text}
-function stopRequestEvents(){clearTimeout(requestReconnectTimer);requestReconnectTimer=null;if(requestEventController)requestEventController.abort();requestEventController=null}
+let requestEventController=null,requestReconnectTimer=null,requestRefreshTimer=null;
+const liveRequestStates=new Map();
+function isTransferText(text){return /^(Searching|Queued|Downloading|Processing|Verifying|Importing|Switching source)\b/.test(text||'')}
+function applyRequestStatus(item,source='event'){if(!item||!item.kind||!item.id||typeof item.text!=='string')return;const id=item.kind+':'+item.id,previous=liveRequestStates.get(id);if(source==='snapshot'&&previous&&isTransferText(previous.text)&&Date.now()-previous.at<120000&&!isTransferText(item.text))return;if(source==='event'&&isTransferText(item.text))liveRequestStates.set(id,{text:item.text,at:Date.now()});else if(!previous||source!=='snapshot'||!isTransferText(previous.text))liveRequestStates.set(id,{text:item.text,at:Date.now()});const el=[...document.querySelectorAll('[data-request-status]')].find(node=>node.dataset.requestStatus===id);if(el&&el.textContent!==item.text)el.textContent=item.text}
+async function mergeRequestSnapshot(signal){const snapshot=await fetch('/v1/requests/live-status',{headers:{Authorization:'Bearer '+key},signal});if(!snapshot.ok)throw Error('Status snapshot unavailable');for(const item of (await snapshot.json()).requests)applyRequestStatus(item,'snapshot')}
+function stopRequestEvents(){clearTimeout(requestReconnectTimer);clearTimeout(requestRefreshTimer);requestReconnectTimer=null;requestRefreshTimer=null;if(requestEventController)requestEventController.abort();requestEventController=null}
 function restartRequestEvents(){
   stopRequestEvents();if(!key||document.hidden||document.getElementById('dashboard-page').classList.contains('hidden'))return;
   const controller=new AbortController();requestEventController=controller;
   (async()=>{try{
-    const snapshot=await fetch('/v1/requests/live-status',{headers:{Authorization:'Bearer '+key},signal:controller.signal});
-    if(!snapshot.ok)throw Error('Status snapshot unavailable');for(const item of (await snapshot.json()).requests)applyRequestStatus(item);
+    await mergeRequestSnapshot(controller.signal);
     const response=await fetch('/v1/requests/live-events',{headers:{Authorization:'Bearer '+key},signal:controller.signal});
     if(!response.ok||!response.body)throw Error('Status stream unavailable');
     const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
-    while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let index;while((index=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,index);buffer=buffer.slice(index+2);const line=frame.split('\n').find(part=>part.startsWith('data: '));if(line&&frame.indexOf('event: unavailable')<0){try{const item=JSON.parse(line.slice(6));if(item.kind==='refresh'){restartRequestEvents();return}applyRequestStatus(item)}catch{}}}}
+    while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let index;while((index=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,index);buffer=buffer.slice(index+2);const line=frame.split('\n').find(part=>part.startsWith('data: '));if(line&&frame.indexOf('event: unavailable')<0){try{const item=JSON.parse(line.slice(6));if(item.kind==='refresh'){clearTimeout(requestRefreshTimer);requestRefreshTimer=setTimeout(()=>{if(requestEventController===controller)restartRequestEvents()},300);continue}applyRequestStatus(item,'event')}catch{}}}}
   }catch(error){if(error.name==='AbortError')return}finally{if(requestEventController===controller){requestEventController=null;if(!document.hidden&&key&&!document.getElementById('dashboard-page').classList.contains('hidden'))requestReconnectTimer=setTimeout(restartRequestEvents,5000)}}})();
 }
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopRequestEvents();else restartRequestEvents()});
