@@ -15,6 +15,10 @@
     "svc:profiles": {
       "TCP": {"443": {"HTTPS": true}},
       "Web": {"profiles.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8765"}}}}
+    },
+    "svc:sona": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"sona.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8790"}}}}
     }
   }
 }

@@ -4,6 +4,6 @@
 set -eu
 
 container=ix-tailscale-tailscale-1
-for service in discover music profile profiles; do
+for service in discover music profile profiles sona; do
     /usr/bin/docker exec "$container" tailscale serve advertise "svc:$service"
 done
