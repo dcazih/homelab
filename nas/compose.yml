@@ -6,7 +6,7 @@ services:
     image: qmcgaw/gluetun:latest
     cap_add: [NET_ADMIN]
     devices: ['/dev/net/tun:/dev/net/tun']
-    env_file: /mnt/Pool/shared/music-server/private/vpn.env
+    env_file: /mnt/Pool/music-server/private/vpn.env
     environment:
       VPN_SERVICE_PROVIDER: airvpn
       VPN_TYPE: wireguard
@@ -22,8 +22,8 @@ services:
     network_mode: 'service:gluetun'
     depends_on: [gluetun]
     volumes:
-      - /mnt/Pool/shared/music-server/state/slskd:/app
-      - /mnt/Pool/shared/music-server/media:/media
+      - /mnt/Pool/music-server/state/slskd:/app
+      - /mnt/Pool/music-server/media:/media
     restart: unless-stopped
 
   droppedneedle:
@@ -35,20 +35,20 @@ services:
       PORT: '8688'
       SLSKD_DOWNLOADS_PATH: /media/_automation/slskd-downloads
     volumes:
-      - /mnt/Pool/shared/music-server/state/droppedneedle/config:/app/config
-      - /mnt/Pool/shared/music-server/state/droppedneedle/cache:/app/cache
-      - /mnt/Pool/shared/music-server/media:/media
-      - /mnt/Pool/shared/music-server/homelab/.cassette-event-sync/plugin:/app/plugins/cassette-profile-events:ro
+      - /mnt/Pool/music-server/state/droppedneedle/config:/app/config
+      - /mnt/Pool/music-server/state/droppedneedle/cache:/app/cache
+      - /mnt/Pool/music-server/media:/media
+      - /mnt/Pool/music-server/source/.cassette-event-sync/plugin:/app/plugins/cassette-profile-events:ro
     ports:
       - '192.168.1.152:8688:8688'
     depends_on: [gluetun]
     restart: unless-stopped
 
   music-profiles:
-    build: /mnt/Pool/shared/music-server/homelab/profiles
-    image: homelab/music-profiles:local
+    build: /mnt/Pool/music-server/source/profiles
+    image: homelab/music-profiles:nas-posix
     user: '3000:3000'
-    env_file: /mnt/Pool/shared/music-server/private/bridge.env
+    env_file: /mnt/Pool/music-server/private/bridge.env
     environment:
       NAVIDROME_URL: http://192.168.1.152:4533
       DROPPEDNEEDLE_URL: http://droppedneedle:8688
@@ -56,17 +56,17 @@ services:
       PEER_SCHEDULER_DB: /data/peer_scheduler.sqlite
       BRIDGE_POLL_SECONDS: '90'
     volumes:
-      - /mnt/Pool/shared/music-server/state/profiles:/data
+      - /mnt/Pool/music-server/state/profiles:/data
     ports:
       - '192.168.1.152:8765:8765'
     depends_on: [droppedneedle]
     restart: unless-stopped
 
   cassette-proxy:
-    build: /mnt/Pool/shared/music-server/homelab/cassette-proxy
-    image: homelab/cassette-proxy:local
+    build: /mnt/Pool/music-server/source/cassette-proxy
+    image: homelab/cassette-proxy:nas-posix
     user: '3000:3000'
-    env_file: /mnt/Pool/shared/music-server/private/proxy.env
+    env_file: /mnt/Pool/music-server/private/proxy.env
     environment:
       NAVIDROME_UPSTREAM: http://192.168.1.152:4533
       CASSETTE_PERSONALIZATION_ENABLED: 'true'
@@ -75,48 +75,48 @@ services:
       DROPPEDNEEDLE_URL: http://droppedneedle:8688
       MUSIC_BRIDGE_URL: http://music-profiles:8765
     volumes:
-      - /mnt/Pool/shared/music-server/state/cassette-proxy:/data
+      - /mnt/Pool/music-server/state/cassette-proxy:/data
     ports:
       - '192.168.1.152:8787:8787'
     depends_on: [music-profiles]
     restart: unless-stopped
 
   cassette-web:
-    build: /mnt/Pool/shared/music-server/homelab/cassette-web
-    image: homelab/sona:local
+    build: /mnt/Pool/music-server/source/cassette-web
+    image: homelab/sona:nas-posix
     user: '3000:3000'
     environment:
       BRIDGE_URL: http://music-profiles:8765
       CASSETTE_URL: http://cassette-proxy:8787
       SESSION_KEY_FILE: /data/session.key
     volumes:
-      - /mnt/Pool/shared/music-server/state/cassette-web:/data
+      - /mnt/Pool/music-server/state/cassette-web:/data
     ports:
       - '192.168.1.152:8790:8790'
     depends_on: [cassette-proxy, music-profiles]
     restart: unless-stopped
 
   muse-music:
-    build: /mnt/Pool/shared/music-server/homelab/muse-music-connector
-    image: homelab/muse-music:local
+    build: /mnt/Pool/music-server/source/muse-music-connector
+    image: homelab/muse-music:nas-posix
     user: '3000:3000'
-    env_file: /mnt/Pool/shared/music-server/private/muse.env
+    env_file: /mnt/Pool/music-server/private/muse.env
     environment:
       BRIDGE_URL: http://music-profiles:8765
       STAGE2_DB: /data/stage2.sqlite3
     volumes:
-      - /mnt/Pool/shared/music-server/state/muse:/data
+      - /mnt/Pool/music-server/state/muse:/data
     ports:
       - '192.168.1.152:8788:8788'
     depends_on: [music-profiles]
     restart: unless-stopped
 
   cassette-event-sync:
-    build: /mnt/Pool/shared/music-server/homelab/.cassette-event-sync/worker
-    image: homelab/cassette-event-sync:local
+    build: /mnt/Pool/music-server/source/.cassette-event-sync/worker
+    image: homelab/cassette-event-sync:nas-posix
     user: '3000:3000'
-    env_file: /mnt/Pool/shared/music-server/private/event-sync.env
+    env_file: /mnt/Pool/music-server/private/event-sync.env
     volumes:
-      - /mnt/Pool/shared/music-server/state/event-sync:/state
+      - /mnt/Pool/music-server/state/event-sync:/state
     depends_on: [music-profiles]
     restart: unless-stopped

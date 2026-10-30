@@ -1,6 +1,6 @@
 # NAS music stack
 
-TrueNAS host paths use `/mnt/Pool/shared/music-server`. `compose.yml` is designed for TrueNAS Apps > Discover > Install via YAML; the application definition can reference the checked-out file with `include:`. The checkout at `music-server/homelab` keeps the existing Git origin.
+TrueNAS keeps the Git checkout at `/mnt/Pool/shared/music-server/homelab` and a preserved copy of the migrated data under `/mnt/Pool/shared/music-server`. Runtime state, private environment files, media, and readable build sources live on the POSIX dataset `/mnt/Pool/music-server`. `compose.yml` is designed for a TrueNAS custom app whose YAML references the checked-out file with `include:`. Copy custom build sources into `/mnt/Pool/music-server/source` with readable file modes before deploying; keep private `.env` files outside that source directory.
 
 Do not deploy this stack until all state directories and the four restricted `.env` files exist. The Mac remains the active server during initial copy. Copy a final snapshot while Mac services are stopped, then start the NAS stack and validate Navidrome library/accounts, slskd queue, DroppedNeedle requests, Bridge profiles, Sona login, and Muse before changing Tailscale routes. Keep Mac data and images until after acceptance.
 
