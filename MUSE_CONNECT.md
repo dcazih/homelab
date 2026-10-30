@@ -21,7 +21,7 @@ Do not bypass the connector to administer the underlying services. The connector
 name: Family Music
 protocol: MCP
 transport: Streamable HTTP
-server_url: https://muse.hippocampus-polaris.ts.net/mcp
+server_url: https://homelab.hippocampus-polaris.ts.net/mcp
 authentication: OAuth 2.0 Authorization Code with PKCE (S256)
 scopes:
   - music:read
