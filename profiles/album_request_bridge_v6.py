@@ -89,8 +89,26 @@ async def find_album_tracks(user, artist, album, rgid):
         'songCount':'0','albumCount':'100','artistCount':'0'})
     rows=(data.get('searchResult3') or {}).get('album') or []
     if isinstance(rows,dict):rows=[rows]
-    matches=[r for r in rows if isinstance(r,dict) and r.get('id') and
-             album_matches(r,artist,album,rgid)]
+    # Navidrome exposes an album's *release* MBID, while requests are
+    # intentionally keyed to a release group. Verify the release's group with
+    # MusicBrainz instead of rejecting a catalog entry that is exact by artist,
+    # title, and track count merely because those IDs differ in kind.
+    matches=[]
+    for candidate in rows:
+        if not isinstance(candidate,dict) or not candidate.get('id'): continue
+        if core.normalize(candidate.get('name')) != core.normalize(album): continue
+        if core.normalize(candidate.get('artist')) != core.normalize(artist): continue
+        candidate_mbid=str(candidate.get('musicBrainzId') or candidate.get('musicbrainzId') or '')
+        if MBID.fullmatch(candidate_mbid) and candidate_mbid.lower()!=rgid.lower():
+            try:
+                import edition_matching as editions
+                release=await editions.mb_get('release/'+candidate_mbid,{'inc':'release-groups'})
+                if str((release.get('release-group') or {}).get('id') or '').lower()!=rgid.lower(): continue
+            except (httpx.HTTPError,ValueError,TypeError,KeyError):
+                # Do not accept a different release when its relationship cannot
+                # be verified.
+                continue
+        matches.append(candidate)
     if len(matches)>1:
         # Two indistinguishable releases must be explicitly resolved.
         return None
