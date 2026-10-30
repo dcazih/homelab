@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "services": {
+    "svc:discover": {
+      "endpoints": {"tcp:443": "http://192.168.1.152:8688"}
+    },
+    "svc:music": {
+      "endpoints": {"tcp:443": "http://192.168.1.152:4533"}
+    },
+    "svc:profile": {
+      "endpoints": {"tcp:443": "http://192.168.1.152:8765"}
+    },
+    "svc:profiles": {
+      "endpoints": {"tcp:443": "http://192.168.1.152:8765"}
+    }
+  }
+}
