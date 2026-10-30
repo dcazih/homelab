@@ -240,6 +240,12 @@ async def _resolve_from_recordings(artist, title, album, preferred_id):
             record_ids.append(rid)
         if len(record_ids) >= _MAX_RECORDINGS:
             break
+    # Without an album hint, do not guess among different recordings.
+    if not album:
+        if preferred_id:
+            record_ids = [preferred_id] if preferred_id in record_ids else []
+        elif len(record_ids) != 1:
+            return []
     confirmed = []
     inspected = 0
     for rid in record_ids[:_MAX_RECORDINGS]:
@@ -248,7 +254,7 @@ async def _resolve_from_recordings(artist, title, album, preferred_id):
             continue
         releases = [entry for entry in record.get('releases') or []
                     if isinstance(entry, dict) and _mb_id(entry.get('id'))
-                    and album_affinity(album, entry.get('title'), artist)
+                    and (not album or album_affinity(album, entry.get('title'), artist))
                     and _release_status(entry) in _APPROVED_STATUSES]
         releases.sort(key=lambda r: (
             _release_status(r) != 'Official',
@@ -260,8 +266,8 @@ async def _resolve_from_recordings(artist, title, album, preferred_id):
             if inspected >= _MAX_RECORDING_RELEASES:
                 break
             inspected += 1
-            release = await mb_get('release/' + str(entry['id']), {'inc':'recordings+artist-credits'})
-            if not album_affinity(album, release.get('title'), artist):
+            release = await mb_get('release/' + str(entry['id']), {'inc':'recordings+artist-credits+release-groups'})
+            if album and not album_affinity(album, release.get('title'), artist):
                 continue
             if not _release_track_matches(release, artist, title, record_id=rid):
                 continue
@@ -284,12 +290,12 @@ async def _resolve_from_recordings(artist, title, album, preferred_id):
 async def verified_recording_release_pairs(artist, title, album, preferred_id=None):
     """Return strictly verified (recording ID, release ID, group ID, title) tuples.
 
-    Album names are essential version hints. Missing album names default to the
-    original song title, primarily for released standalone singles.
+    When the album is unknown, search recordings without inventing a release title;
+    require an unambiguous recording or an explicit recording ID.
     """
-    album = (album or title).strip()
+    album = (album or '').strip()
     preferred = _mb_id(preferred_id)
-    release_pairs = await _resolve_from_releases(artist, title, album, preferred)
+    release_pairs = await _resolve_from_releases(artist, title, album, preferred) if album else []
     if not release_pairs:
         release_pairs = await _resolve_from_recordings(artist, title, album, preferred)
     if preferred:

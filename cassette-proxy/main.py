@@ -327,6 +327,38 @@ def create_app(upstream: str | None = None, transport: httpx.AsyncBaseTransport 
         outgoing.raw_headers = output_headers
         return outgoing
 
+    @app.api_route('/{web_path:path}', methods=['GET','HEAD','POST','PUT','PATCH','DELETE'])
+    async def navidrome_web(web_path: str, request: Request):
+        # Registered after the Subsonic routes so Cassette behavior remains intact.
+        raw_path=request.scope.get('raw_path',request.url.path.encode('utf-8')).decode('ascii')
+        raw_query=request.scope.get('query_string',b'').decode('ascii')
+        target=upstream+raw_path+('?' + raw_query if raw_query else '')
+        try:
+            body=request.stream() if request.method in ('POST','PUT','PATCH','DELETE') else None
+            outbound=request.app.state.client.build_request(request.method,target,headers=clean_headers(request.headers),content=body)
+            response=await request.app.state.client.send(outbound,stream=True)
+        except (httpx.HTTPError,RuntimeError):
+            logger.warning('Navidrome web request failed')
+            return JSONResponse(status_code=502,content={'error':'navidrome_unreachable'})
+        headers=[]
+        for key,value in clean_headers(response.headers):
+            if key.lower()=='location':
+                value=redirect_location(value,upstream,request)
+                if value is None:
+                    await response.aclose()
+                    return JSONResponse(status_code=502,content={'error':'unsafe_upstream_redirect'})
+            headers.append((key.encode('latin-1'),value.encode('latin-1')))
+        async def stream():
+            try:
+                if response.is_stream_consumed:
+                    yield response.content
+                else:
+                    async for chunk in response.aiter_raw():yield chunk
+            finally:await response.aclose()
+        outgoing=StreamingResponse(stream(),status_code=response.status_code)
+        outgoing.raw_headers=headers
+        return outgoing
+
     return app
 
 

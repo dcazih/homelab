@@ -72,6 +72,7 @@ def set_state(uid, rgid, state, message=''):
         db.execute('''UPDATE cassette_album_requests SET state=?,message=?,updated=?
                       WHERE user_id=? AND release_group_mbid=?''',
                    (state,message,int(time.time()),uid,rgid))
+    core.emit_live_request_status(uid,'album',rgid,state,message)
 
 
 def album_matches(candidate, artist, album, rgid):

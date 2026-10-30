@@ -1,0 +1,40 @@
+Soulseek Peer-Aware Request Scheduler validation, 2026-10-29
+
+1. python3 -m unittest -v tests.test_peer_scheduler tests.test_shared_acquisition
+   8 tests passed. Covers durable defaults, peer limits and blocks, cache and
+   search rate gate, retry/backoff and stall controls, reliability tie-breaking,
+   acquisition phases, and exact recording/edition family claim.
+
+2. Disposable network-isolated custom DroppedNeedle image:
+   python /tests/test_peer_repository.py -v
+   3 tests passed. Covers slskd enqueue admission, explicit block enforcement,
+   and reconciliation of an existing slskd transfer without duplicate enqueue.
+   Final acquisition strategy import passed.
+
+3. Disposable network-isolated Bridge image with temporary databases:
+   Admin scheduler snapshot returned 401 without the key and 200 with it.
+   Settings update, peer override, and peer history endpoints passed.
+   Final snapshot included acquisition phases.
+
+4. JavaScript syntax: node --check on the embedded dashboard script passed.
+   Python compileall of touched modules passed. Docker Compose config -q passed.
+
+5. Live deployment: DroppedNeedle and Music Profiles Bridge healthy. Existing
+   cassette-proxy and slskd healthy and not recreated. Live admin snapshot
+   returned 200 from Bridge and included settings, peers, jobs, and phases.
+   The served dashboard contained Peer History, Scheduler Settings, and Active
+   Scheduler. Live settings update and restoration succeeded without restart.
+   Bridge and DroppedNeedle database backup PRAGMA integrity_check returned ok.
+
+No synthetic live Soulseek download was submitted, and no Cassette client was
+modified. Real peer rule text is only enforced when represented as a manual
+block or numeric limit; slskd locked-file flags are excluded automatically.
+
+Profile client update (2026-10-29):
+- Four isolated Bridge API tests passed: personal sessions and layout, admin account access and layout, mocked Navidrome password reset, and linked DroppedNeedle scheduler retry.
+- Real Navidrome login and logout of a temporary test session succeeded; the existing personal session remained valid.
+- Disposable browser fixture verified sign-in, dual admin/personal session, icon-only refresh, removal cancel and confirm, Account navigation, and DroppedNeedle expansion. Safari verified island drag and persistence after reload and Output drag.
+- Supplied SVG assets loaded; the DroppedNeedle static rewrite test passed with a non-root base path.
+- Live Bridge and DroppedNeedle containers reported healthy. No live password reset was performed.
+
+Request clearing and Output update (2026-10-29): eight isolated Bridge tests passed, including native cancellation, shared song and album preservation, and failed cancellation retention. An isolated browser fixture verified Clear All for a song and an album, the default section order, and Output viewport bounds and bottom snap. The live song and album list endpoints returned 200; no live requests were cleared.

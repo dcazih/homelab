@@ -1,0 +1,4 @@
+# Keep the prior custom proxy image intact while adding Navidrome web routing.
+services:
+  cassette-proxy:
+    image: music-cassette-proxy:navidrome-ui-v1

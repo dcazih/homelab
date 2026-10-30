@@ -1,0 +1,10 @@
+services:
+  cassette-proxy:
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      DROPPEDNEEDLE_BEARER_TOKEN: ''
+
+  music-profiles:
+    environment:
+      DROPPEDNEEDLE_BEARER_TOKEN: ''

@@ -1,0 +1,3 @@
+export const defaults={continueAcrossDevices:false,replayGain:false,replayGainMode:'track',preamp:0,preventClipping:true,crossfade:0,gaplessAlbums:true,cacheTracks:5,cacheFormat:'original',cellularCache:false,downloadFormat:'original',listenBrainzUser:'',listenBrainzToken:'',audioMuseUrl:'',openReleasesIn:'musicbrainz'};
+export function readSettings(username){try{return {...defaults,...JSON.parse(localStorage.getItem('sona-settings:'+username)||'{}')}}catch{return {...defaults}}}
+export function writeSettings(username,value){localStorage.setItem('sona-settings:'+username,JSON.stringify(value))}

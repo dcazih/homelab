@@ -1,0 +1,8 @@
+const DB_NAME='cassette-web-downloads';
+function database(){return new Promise((resolve,reject)=>{const request=indexedDB.open(DB_NAME,1);request.onupgradeneeded=()=>request.result.createObjectStore('tracks',{keyPath:'key'});request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
+function operate(mode,work){return database().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction('tracks',mode);const store=tx.objectStore('tracks');const request=work(store);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);tx.oncomplete=()=>db.close();tx.onerror=()=>reject(tx.error)}))}
+export const getOffline=(username,id)=>operate('readonly',store=>store.get(username+':'+id));
+export const listOffline=username=>operate('readonly',store=>store.getAll()).then(rows=>rows.filter(row=>row.username===username));
+export const removeOffline=(username,id)=>operate('readwrite',store=>store.delete(username+':'+id));
+export async function saveOffline(username,track){const response=await fetch('/api/media/download?'+new URLSearchParams({id:track.id}));if(!response.ok)throw new Error('Download failed');const type=response.headers.get('content-type')||'';if(!type.startsWith('audio/')&&!type.includes('octet-stream'))throw new Error('The server did not return playable audio');const blob=await response.blob();await operate('readwrite',store=>store.put({key:username+':'+track.id,username,track,blob,saved:Date.now()}));return blob.size}
+export async function clearOffline(username){const rows=await listOffline(username);for(const row of rows)await removeOffline(username,row.track.id)}

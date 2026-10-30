@@ -9,7 +9,7 @@ from urllib.parse import quote
 import httpx
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -93,6 +93,7 @@ class LayoutIn(BaseModel):
     positions:dict[str,list[int]]=Field(default_factory=dict)
 class ClearRequestsIn(BaseModel):
     album_ids:Optional[list[str]]=None
+    proposal_ids:Optional[list[str]]=None
 
 class ProposedSong(BaseModel):
     artist:str=Field(min_length=1,max_length=160)
@@ -659,6 +660,159 @@ def list_proposals(user=Depends(require_user)):
         return {'proposals':[{**dict(r),
         'display_status':request_status(r['state'])} for r in rows]}
 
+def _request_display_text(state,message):
+    if state in ('added','ready') and re.match(r'^(existing |album already available|automatically added after arrival in shared library)',message or '',re.I):
+        message='Found in our shared library'
+    return request_status(state)+' • '+(message or 'Awaiting your approval')
+
+@app.get('/v1/requests/live-status')
+async def live_request_status(user=Depends(require_user)):
+    with connection() as db:
+        songs=[dict(row) for row in db.execute('SELECT id,recording_mbid,state,message FROM proposals WHERE user_id=? AND dismissed_at IS NULL ORDER BY created DESC LIMIT 500',(user['id'],))]
+        albums=[dict(row) for row in db.execute('SELECT release_group_mbid,state,message FROM cassette_album_requests WHERE user_id=? AND dismissed_at IS NULL ORDER BY created DESC LIMIT 200',(user['id'],))]
+    requests=[{'kind':'track','id':row['id'],'mbid':row['recording_mbid'],'state':row['state'],'text':_request_display_text(row['state'],row['message'])} for row in songs]
+    requests += [{'kind':'album','id':row['release_group_mbid'],'mbid':row['release_group_mbid'],'state':row['state'],'text':_request_display_text(row['state'],row['message'])} for row in albums]
+    waiting={'requested','awaiting_approval','importing','submission_uncertain'}
+    if not any(row['mbid'] and row['state'] in waiting for row in requests):
+        return {'requests':requests}
+    token=linked_token(connection,cipher,user['id'])
+    if not token:return {'requests':requests}
+    try:
+        async with httpx.AsyncClient(timeout=8,trust_env=False,follow_redirects=False) as client:
+            headers={'Authorization':'Bearer '+token}
+            active,history=await asyncio.gather(client.get(DN+'/api/v1/requests/active',headers=headers),client.get(DN+'/api/v1/requests/history',params={'page_size':100},headers=headers))
+            active.raise_for_status();history.raise_for_status()
+            remote={}
+            for item in (history.json().get('items') or [])+(active.json().get('items') or []):
+                if isinstance(item,dict):remote[(str(item.get('request_kind') or 'album'),str(item.get('musicbrainz_id') or '').lower())]=item
+        labels={'awaiting_approval':'Awaiting approval','pending':'Queued','queued':'Queued','searching':'Searching','downloading':'Downloading','processing':'Processing','importing':'Importing','completed':'Completed','imported':'Imported','failed':'Failed','cancelled':'Cancelled','rejected':'Rejected'}
+        for row in requests:
+            if row['state'] not in waiting or not row['mbid']:continue
+            item=remote.get((row['kind'],row['mbid'].lower()))
+            if not item:continue
+            raw=str(item.get('download_status') or item.get('status') or '').lower()
+            label=labels.get(raw,raw.replace('_',' ').capitalize()) if raw else ''
+            if not label:continue
+            detail=item.get('error_message') if raw=='failed' else None
+            progress=item.get('progress')
+            if isinstance(progress,(int,float)) and not isinstance(progress,bool) and 0<=progress<=100:
+                detail=f'{progress:.0f}%'
+            if raw in ('imported','completed'):detail='Waiting for Navidrome to confirm and save'
+            row['text']=label+(' • '+str(detail) if detail else '')
+    except (httpx.HTTPError,ValueError,TypeError,AttributeError):
+        # Retain the Bridge's most recent known state if DroppedNeedle is unavailable.
+        pass
+    return {'requests':requests}
+
+_live_status_watchers={}
+
+def emit_live_request_status(user_id,kind,request_id,state,message=''):
+    """Deliver only this user's Bridge state change to active event streams."""
+    event={'kind':kind,'id':request_id,'text':_request_display_text(state,message)}
+    for queue in tuple(_live_status_watchers.get(user_id,())):
+        try:
+            queue.put_nowait(event)
+            if state in ('requested','awaiting_approval'):queue.put_nowait({'kind':'refresh'})
+        except asyncio.QueueFull:pass
+
+def _download_event_text(event, payload):
+    labels={'searching':'Searching','pending':'Queued','queued':'Queued','downloading':'Downloading','processing':'Verifying / importing','completed':'Completed','imported':'Imported','failed':'Failed','cancelled':'Cancelled','retrying':'Switching source','awaiting_review':'Needs review','partial':'Needs review'}
+    if event=='progress':
+        progress=payload.get('progress_percent')
+        text='Queued' if payload.get('remote_queued') else 'Downloading'
+        if isinstance(progress,(int,float)) and not isinstance(progress,bool) and 0<=progress<=100:text+=f' • {progress:.0f}%'
+        return text
+    if event=='client_outage':return 'Deferred • Download client unavailable'
+    status=str(payload.get('status') or '').lower()
+    if not status:return None
+    text=labels.get(status,status.replace('_',' ').capitalize())
+    if status in ('completed','imported'):text+=' • Waiting for Navidrome to confirm and save'
+    if status=='failed' and payload.get('error'):text+=' • '+str(payload['error'])[:300]
+    return text
+
+@app.get('/v1/requests/live-events')
+async def live_request_events(user=Depends(require_user)):
+    token=linked_token(connection,cipher,user['id'])
+    async def stream():
+        yield ': connected\n\n'
+        with connection() as db:
+            tracks={str(row['recording_mbid']).lower():row['id'] for row in db.execute("SELECT id,recording_mbid FROM proposals WHERE user_id=? AND dismissed_at IS NULL AND recording_mbid IS NOT NULL AND state IN ('requested','submitting','submission_uncertain')",(user['id'],))}
+            albums={str(row['release_group_mbid']).lower():row['release_group_mbid'] for row in db.execute("SELECT release_group_mbid FROM cassette_album_requests WHERE user_id=? AND dismissed_at IS NULL AND state IN ('requested','awaiting_approval','importing','submission_uncertain')",(user['id'],))}
+        headers={'Authorization':'Bearer '+(token or '')};queue=asyncio.Queue(maxsize=256);workers=[]
+        _live_status_watchers.setdefault(user['id'],set()).add(queue)
+        async def consume(client,task_id,kind,request_id):
+            reconnecting=False
+            while True:
+                try:
+                    async with client.stream('GET',DN+'/api/v1/downloads/'+quote(task_id,safe='')+'/stream',headers=headers) as response:
+                        response.raise_for_status();event='';data=[]
+                        if reconnecting:
+                            snapshot=await client.get(DN+'/api/v1/downloads/'+quote(task_id,safe=''),headers=headers)
+                            snapshot.raise_for_status();payload=snapshot.json();text=_download_event_text('status',payload) if isinstance(payload,dict) else None
+                            if text:await queue.put({'kind':kind,'id':request_id,'text':text})
+                        async for line in response.aiter_lines():
+                            if not line:
+                                if data:
+                                    try:
+                                        payload=json.loads('\n'.join(data));text=_download_event_text(event,payload) if isinstance(payload,dict) else None
+                                        if text:await queue.put({'kind':kind,'id':request_id,'text':text})
+                                        if event=='complete':return
+                                    except (ValueError,TypeError):pass
+                                event='';data=[]
+                            elif line.startswith('event:'):event=line[6:].strip()
+                            elif line.startswith('data:'):data.append(line[5:].lstrip())
+                except (httpx.HTTPError,ValueError):
+                    await queue.put({'kind':kind,'id':request_id,'text':'Status connection interrupted; reconnecting'})
+                reconnecting=True
+                await asyncio.sleep(5)
+        async def consume_global(client):
+            while True:
+                try:
+                    async with client.stream('GET',DN+'/api/v1/events/stream',headers=headers) as response:
+                        response.raise_for_status();event=''
+                        async for line in response.aiter_lines():
+                            if line.startswith('event:'):event=line[6:].strip()
+                            elif not line:
+                                if event=='activity.changed' or event.startswith(('request.','download.')):await queue.put({'kind':'refresh'})
+                                event=''
+                except (httpx.HTTPError,ValueError):pass
+                await asyncio.sleep(5)
+        try:
+            if not token:
+                while True:
+                    try:item=await asyncio.wait_for(queue.get(),timeout=25)
+                    except asyncio.TimeoutError:
+                        yield ': keepalive\n\n';continue
+                    yield 'data: '+json.dumps(item)+'\n\n'
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10,read=None),trust_env=False,follow_redirects=False) as client:
+                response=await client.get(DN+'/api/v1/downloads',params={'page_size':100},headers=headers)
+                response.raise_for_status();tasks=response.json().get('items',[])
+                workers.append(asyncio.create_task(consume_global(client)))
+                seen_requests=set()
+                for task in tasks:
+                    if not isinstance(task,dict):continue
+                    task_id=str(task.get('id') or '');recording=str(task.get('recording_mbid') or '').lower();group=str(task.get('release_group_mbid') or '').lower()
+                    task_kind=str(task.get('download_type') or '').lower()
+                    match=('track',tracks[recording]) if task_kind=='track' and recording in tracks else (('album',albums[group]) if task_kind=='album' and group in albums else None)
+                    if not task_id or not match or match in seen_requests:continue
+                    seen_requests.add(match)
+                    kind,request_id=match;text=_download_event_text('status',task)
+                    if text:yield 'data: '+json.dumps({'kind':kind,'id':request_id,'text':text})+'\n\n'
+                    workers.append(asyncio.create_task(consume(client,task_id,kind,request_id)))
+                while True:
+                    try:item=await asyncio.wait_for(queue.get(),timeout=25)
+                    except asyncio.TimeoutError:
+                        yield ': keepalive\n\n';continue
+                    yield 'data: '+json.dumps(item)+'\n\n'
+        except (httpx.HTTPError,ValueError,TypeError,AttributeError):
+            yield 'event: unavailable\ndata: {}\n\n'
+        finally:
+            watchers=_live_status_watchers.get(user['id']);watchers.discard(queue) if watchers is not None else None
+            if watchers is not None and not watchers:_live_status_watchers.pop(user['id'],None)
+            for worker in workers:worker.cancel()
+            if workers:await asyncio.gather(*workers,return_exceptions=True)
+    return StreamingResponse(stream(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
+
 @app.delete('/v1/proposals/{proposal_id}')
 def dismiss_proposal(proposal_id:str,user=Depends(require_user)):
     """Hide this profile's proposal from the list without cancelling a download.
@@ -692,7 +846,7 @@ async def _cancel_native_request(user,mbid,kind):
     if result.get('success'): return
     message=str(result.get('message') or '')
     # A completed/failed/cancelled request has no live transfer to stop.
-    if any(f"status '{state}'" in message.lower() for state in ('completed','failed','cancelled','rejected')):
+    if any(f"status '{state}'" in message.lower() for state in ('completed','imported','failed','cancelled','rejected')):
         return
     raise ValueError(message or 'DroppedNeedle did not confirm cancellation')
 
@@ -777,10 +931,12 @@ async def clear_requests(body:ClearRequestsIn,user=Depends(require_user)):
     import album_request_bridge_v6 as albums
     async with _clear_requests_lock, albums._album_lock:
         with connection() as db:
-            proposals=[] if body.album_ids is not None else [dict(r) for r in db.execute(
+            proposals=[] if body.album_ids is not None and body.proposal_ids is None else [dict(r) for r in db.execute(
                 'SELECT * FROM proposals WHERE user_id=? AND dismissed_at IS NULL ORDER BY created',(user['id'],))]
             album_rows=[dict(r) for r in db.execute('SELECT * FROM cassette_album_requests WHERE user_id=? AND dismissed_at IS NULL ORDER BY created',(user['id'],))]
+        if body.proposal_ids is not None: proposals=[r for r in proposals if r['id'] in body.proposal_ids]
         if body.album_ids is not None: album_rows=[r for r in album_rows if r['release_group_mbid'] in body.album_ids]
+        elif body.proposal_ids is not None: album_rows=[]
         failures=[];cleared=0
         for item in proposals:
             try: await _clear_proposal(user,item);cleared+=1
@@ -799,6 +955,7 @@ def get_prop(uid,pid):
 def update_prop(uid,pid,state,message='',nav_id=None):
     with connection() as d:
         d.execute('UPDATE proposals SET state=?,message=?,nav_song_id=? WHERE user_id=? AND id=?',(state,message,nav_id,uid,pid))
+    emit_live_request_status(uid,'track',pid,state,message)
 
 @app.post('/v1/proposals/{proposal_id}/reject')
 def reject(proposal_id:str,user=Depends(require_user)):
@@ -826,6 +983,31 @@ async def _submit_verified_cassette_track(user, proposal_id, p):
                     'Invalid MusicBrainz recording ID; no download started')
         return {'status':'needs_metadata','message':'Invalid recording identifier'}
     request_album=p.get('album') or ''
+    # Only apply a default when the caller has not named a version, edition,
+    # or recording. Explicitly named variants remain subject to exact matching.
+    version_hint=re.search(r'\b(clean|explicit|deluxe|expanded|remaster(?:ed)?|anniversary|bonus|instrumental|radio|live|remix|acoustic|edition)\b',f"{p['title']} {request_album}",re.I)
+    if not mbid and not version_hint:
+        try:
+            options=(await proposal_recording_options(proposal_id,user))['options']
+            ordinary=[item for item in options if not re.search(r'\b(deluxe|expanded|remaster(?:ed)?|anniversary|bonus|instrumental|radio|live|remix|acoustic)\b',item['album'],re.I)]
+            explicit=[item for item in ordinary if item['version'].strip().casefold()=='explicit']
+            unspecified=[item for item in ordinary if item['version'].strip().casefold()=='unspecified version']
+            selected=explicit[0] if len(explicit)==1 else (unspecified[0] if not explicit and len(ordinary)==1 and len(unspecified)==1 else None)
+            if not selected:
+                update_prop(user['id'],proposal_id,'needs_metadata','Choose a verified version before requesting this recording')
+                return {'status':'needs_metadata','message':'Choose a verified version using Find versions'}
+            from metadata_resolver_v1 import verified_recording_release_pairs
+            candidates=await verified_recording_release_pairs(p['artist'],p['title'],request_album,preferred_id=selected['recording_mbid'])
+            candidates=[pair for pair in candidates if pair[0]==selected['recording_mbid']]
+            if not candidates:
+                update_prop(user['id'],proposal_id,'needs_metadata','The preferred recording could not be verified')
+                return {'status':'needs_metadata','message':'Choose a verified version using Find versions'}
+            # The normal exact-release submission path below handles this choice.
+            return await _submit_with_selected_recording(user,proposal_id,p,selected['recording_mbid'])
+        except (HTTPException,httpx.HTTPError,ValueError,TypeError) as exc:
+            LOG.warning('Default recording lookup failed: %s',type(exc).__name__)
+            update_prop(user['id'],proposal_id,'needs_metadata','Version lookup unavailable; try again or use Find versions')
+            return {'status':'needs_metadata','message':'Version lookup unavailable'}
     try:
         if request_album:
             request_album,candidates=await editions.resolve_cassette_album_track(
@@ -833,10 +1015,11 @@ async def _submit_verified_cassette_track(user, proposal_id, p):
             # The recording originally chosen by Cassette is preferred only
             # when it belongs to the exact verified edition.
             if mbid:
-                candidates=([pair for pair in candidates if pair[0]==mbid]
-                            + [pair for pair in candidates if pair[0]!=mbid])
+                candidates=[pair for pair in candidates if pair[0]==mbid]
         elif mbid:
-            candidates=[(mbid,None)]
+            from metadata_resolver_v1 import verified_recording_release_pairs
+            candidates=await verified_recording_release_pairs(p['artist'],p['title'],'',preferred_id=mbid)
+            candidates=[pair for pair in candidates if pair[0]==mbid]
         else:
             recordings=await editions.dn_resolve_track(user,p['artist'],p['title'])
             candidates=[(recordings[0],None)] if len(recordings)==1 else []
@@ -856,7 +1039,7 @@ async def _submit_verified_cassette_track(user, proposal_id, p):
         try:
             from metadata_resolver_v1 import verified_recording_release_pairs
             candidates=await verified_recording_release_pairs(
-                p['artist'],p['title'],request_album or p['title'],preferred_id=mbid or None)
+                p['artist'],p['title'],request_album,preferred_id=mbid or None)
         except (HTTPException,httpx.HTTPError,ValueError,TypeError) as exc:
             LOG.warning('Alternate recording metadata lookup unavailable: %s',type(exc).__name__)
             update_prop(user['id'],proposal_id,'needs_metadata',
@@ -973,6 +1156,15 @@ async def _submit_verified_cassette_track(user, proposal_id, p):
                 'DroppedNeedle rejected all verified edition pairs and confirmed no download started')
     return {'status':'needs_metadata','message':'No verified edition accepted; no download started'}
 
+async def _submit_with_selected_recording(user,proposal_id,p,recording_mbid):
+    # Keep the selected recording in the existing proposal before submission;
+    # the normal path verifies it again and pins its release.
+    with connection() as db:
+        changed=db.execute("UPDATE proposals SET recording_mbid=? WHERE id=? AND user_id=? AND state IN ('proposed','needs_admin','needs_metadata','needs_link','needs_relink','needs_selection')",(recording_mbid,proposal_id,user['id']))
+        if changed.rowcount!=1:err('Request changed while selecting a version',409)
+    selected=dict(p);selected['recording_mbid']=recording_mbid
+    return await _submit_verified_cassette_track(user,proposal_id,selected)
+
 @app.post('/v1/proposals/{proposal_id}/approve')
 async def approve(proposal_id:str,user=Depends(require_user)):
     p=get_prop(user['id'],proposal_id)
@@ -998,6 +1190,84 @@ async def approve(proposal_id:str,user=Depends(require_user)):
         update_prop(user['id'],proposal_id,'needs_selection','Multiple exact matches; select a specific song in /v1/search')
         return {'status':'needs_selection','candidates':[{'id':s['id'],'artist':s.get('artist'),'title':s.get('title'),'album':s.get('album')} for s in exact]}
     return await _submit_verified_cassette_track(user,proposal_id,p)
+
+class ManualRequestIn(BaseModel):
+    kind:Literal['song','album']
+    artist:str=Field(min_length=1,max_length=160)
+    title:str=Field(min_length=1,max_length=200)
+    album:str=Field(default='',max_length=200)
+    recording_mbid:Optional[str]=Field(default=None,max_length=36)
+    release_group_mbid:Optional[str]=Field(default=None,max_length=36)
+
+@app.post('/v1/requests/manual')
+async def manual_request(body:ManualRequestIn,user=Depends(require_user)):
+    import edition_matching as editions
+    artist=body.artist.strip();title=body.title.strip()
+    if not artist or not title:err('Enter an artist and title',400)
+    if body.kind=='song':
+        if body.recording_mbid and not editions.MBID.fullmatch(body.recording_mbid):err('Enter a valid MusicBrainz recording ID',400)
+        batch=ProposalBatch(songs=[ProposedSong(artist=artist,title=title,album=body.album.strip(),recording_mbid=body.recording_mbid or None,source='Music Profiles request')])
+        result=await propose(batch,user=user)
+        return await approve(result['ids'][0],user=user)
+    import album_request_bridge_v6 as albums
+    if body.release_group_mbid and not editions.MBID.fullmatch(body.release_group_mbid):err('Enter a valid MusicBrainz release group ID',400)
+    # Album acquisitions operate on a release group; they cannot pin a specific edition.
+    if body.album.strip():err('Specific album editions cannot yet be guaranteed. Request the album without an edition or use Cassette to choose a release.',400)
+    try:
+        if body.release_group_mbid:
+            group=await editions.mb_get('release-group/'+body.release_group_mbid,{'inc':'artist-credits'})
+            candidates=editions.mb_original_release_candidates([group],artist,title)
+        else:
+            safe=lambda value:value.replace('"','').strip()
+            data=await editions.mb_get('release-group',{'query':f'releasegroup:"{safe(title)}" AND artist:"{safe(artist)}"','limit':25})
+            candidates=editions.mb_original_release_candidates(data.get('release-groups',[]),artist,title)
+        if len(candidates)!=1:err('Could not identify one exact album. Check the artist and title, or provide its MusicBrainz release group ID.',400)
+        group=candidates[0]
+        data=await editions.mb_get('release',{'release-group':group['id'],'limit':100})
+        releases=[r for r in data.get('releases',[]) if isinstance(r,dict) and r.get('status')=='Official' and normalize(r.get('title'))==normalize(title) and editions.MBID.fullmatch(str(r.get('id','')))]
+        releases.sort(key=editions.mb_release_rank)
+        if not releases:err('No matching official album release was found.',400)
+        details=await editions.mb_get('release/'+releases[0]['id'],{'inc':'recordings'})
+        count=sum(int(m.get('track-count') or len(m.get('tracks') or [])) for m in details.get('media',[]) if isinstance(m,dict))
+        if not 1<=count<=1000:err('Could not verify the album track count.',400)
+    except (httpx.HTTPError,ValueError,TypeError,KeyError):err('Album metadata is unavailable. Try again later.',502)
+    return await albums.request_album(albums.AlbumRequest(username=user['username'],artist=artist,album=title,release_group_mbid=group['id'],expected_tracks=count))
+
+class RecordingChoice(BaseModel):
+    recording_mbid:str=Field(min_length=36,max_length=36)
+
+@app.get('/v1/proposals/{proposal_id}/recording-options')
+async def proposal_recording_options(proposal_id:str,user=Depends(require_user)):
+    import edition_matching as editions
+    from metadata_resolver_v1 import same_recording,artist_matches,verified_recording_release_pairs
+    p=get_prop(user['id'],proposal_id)
+    if p['state'] not in ('needs_metadata','needs_selection','proposed','needs_link','needs_relink','needs_admin'):err('This request cannot be changed now',409)
+    safe=lambda value:value.replace('"','').strip()
+    data=await editions.mb_get('recording',{'query':f'recording:"{safe(p["title"])}" AND artist:"{safe(p["artist"])}"','limit':50})
+    matches=[];seen=set()
+    for item in data.get('recordings',[]):
+        rid=item.get('id','')
+        if not editions.MBID.fullmatch(rid) or rid in seen or not same_recording(p['title'],item.get('title')) or not artist_matches(item.get('artist-credit'),p['artist']):continue
+        seen.add(rid)
+        pairs=await verified_recording_release_pairs(p['artist'],p['title'],p.get('album') or '',preferred_id=rid)
+        pairs=[pair for pair in pairs if pair[0]==rid]
+        if pairs:matches.append({'recording_mbid':rid,'version':item.get('disambiguation') or 'Unspecified version','album':pairs[0][3]})
+        if len(seen)>=5:break
+    return {'options':matches}
+
+@app.post('/v1/proposals/{proposal_id}/recording-choice')
+async def choose_recording(proposal_id:str,body:RecordingChoice,user=Depends(require_user)):
+    import edition_matching as editions
+    from metadata_resolver_v1 import verified_recording_release_pairs
+    p=get_prop(user['id'],proposal_id)
+    if p['state'] not in ('needs_metadata','needs_selection','proposed'):err('This request cannot be changed now',409)
+    if not editions.MBID.fullmatch(body.recording_mbid):err('Invalid recording ID',400)
+    pairs=await verified_recording_release_pairs(p['artist'],p['title'],p.get('album') or '',preferred_id=body.recording_mbid)
+    if not any(pair[0]==body.recording_mbid for pair in pairs):err('This recording could not be verified for the request',400)
+    with connection() as db:
+        changed=db.execute("UPDATE proposals SET recording_mbid=? WHERE id=? AND user_id=? AND state IN ('needs_metadata','needs_selection','proposed')",(body.recording_mbid,proposal_id,user['id']))
+        if changed.rowcount!=1:err('Request changed; try again',409)
+    return await _submit_verified_cassette_track(user,proposal_id,get_prop(user['id'],proposal_id))
 
 @app.post('/v1/proposals/{proposal_id}/choose')
 async def choose(proposal_id:str,selection:SelectSong,user=Depends(require_user)):
@@ -1086,6 +1356,19 @@ async def reconnect_nav(data:ReconnectIn,user=Depends(require_user)):
     with connection() as d:
         d.execute('UPDATE users SET secret=? WHERE id=?',(candidate['secret'],user['id']))
     return {'status':'reconnected'}
+
+@app.middleware('http')
+async def canonical_profiles_host(request:Request, call_next):
+    if request.url.hostname=='profile.hippocampus-polaris.ts.net':
+        url='https://profiles.hippocampus-polaris.ts.net'+request.url.path
+        if request.url.query:url+='?'+request.url.query
+        return RedirectResponse(url,status_code=307)
+    return await call_next(request)
+
+@app.api_route('/requests',methods=['GET','HEAD'],include_in_schema=False)
+@app.api_route('/requests/',methods=['GET','HEAD'],include_in_schema=False)
+def requests_redirect():
+    return RedirectResponse('/',status_code=307)
 
 @app.get('/',response_class=HTMLResponse,include_in_schema=False)
 def home():

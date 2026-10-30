@@ -138,6 +138,149 @@ class ProfileAuthTests(unittest.TestCase):
         self.assertEqual(calls[0].url.path,'/api/v1/requests/active/'+mbid)
         self.assertEqual(calls[0].url.params['request_kind'],'track')
 
+    def test_clear_imported_album_with_stale_bridge_state(self):
+        mbid='77777777-7777-7777-7777-777777777777'
+        with self.module.connection() as db:
+            db.execute("INSERT INTO cassette_album_requests(user_id,release_group_mbid,artist,album,expected_tracks,state,created,updated) VALUES(?,?,?,?,?,?,?,?)",(self.user_id,mbid,'Artist','Album',10,'awaiting_approval',1,1))
+        def handler(request):
+            return httpx.Response(200,json={'success':False,'message':"Cannot cancel request with status 'imported'"})
+        client_class=httpx.AsyncClient
+        with patch.object(self.module,'linked_token',return_value='test-dn-token'), \
+             patch.object(self.module.httpx,'AsyncClient',side_effect=lambda **kw:client_class(transport=httpx.MockTransport(handler),**kw)):
+            result=self.client.post('/v1/requests/clear',headers={'Authorization':'Bearer old-token'},json={'album_ids':[mbid]})
+        self.assertEqual(result.json(),{'cleared':1,'remaining':[]})
+        with self.module.connection() as db:
+            row=db.execute('SELECT dismissed_at,save_desired FROM cassette_album_requests WHERE user_id=? AND release_group_mbid=?',(self.user_id,mbid)).fetchone()
+            self.assertIsNotNone(row['dismissed_at'])
+            self.assertEqual(row['save_desired'],0)
+
+    def test_clear_one_track_leaves_other_requests(self):
+        with self.module.connection() as db:
+            for item in ('one','two'):
+                db.execute("INSERT INTO proposals(id,user_id,artist,title,state,recording_mbid,created) VALUES(?,?,?,?,?,?,?)",(item,self.user_id,'Artist',item,'requested','66666666-6666-6666-6666-666666666666',1))
+            db.execute("INSERT INTO cassette_album_requests(user_id,release_group_mbid,artist,album,expected_tracks,state,created,updated) VALUES(?,?,?,?,?,?,?,?)",(self.user_id,'77777777-7777-7777-7777-777777777777','Artist','Album',10,'ready',1,1))
+        with patch.object(self.module,'_cancel_native_request',AsyncMock()) as cancel:
+            result=self.client.post('/v1/requests/clear',headers={'Authorization':'Bearer old-token'},json={'proposal_ids':['one']})
+        self.assertEqual(result.json(),{'cleared':1,'remaining':[]})
+        cancel.assert_awaited_once()
+        with self.module.connection() as db:
+            self.assertIsNone(db.execute("SELECT dismissed_at FROM proposals WHERE id='two'").fetchone()['dismissed_at'])
+            self.assertIsNone(db.execute('SELECT dismissed_at FROM cassette_album_requests').fetchone()['dismissed_at'])
+
+    def test_manual_song_requests_use_existing_approval(self):
+        with patch.object(self.module,'approve',AsyncMock(return_value={'status':'requested','message':'Accepted'})) as approve:
+            response=self.client.post('/v1/requests/manual',headers={'Authorization':'Bearer old-token'},json={'kind':'song','artist':'Artist','title':'Song','album':'Edition'})
+        self.assertEqual(response.status_code,200,response.text)
+        approve.assert_awaited_once()
+        with self.module.connection() as db:
+            self.assertEqual(db.execute("SELECT album FROM proposals WHERE title='Song'").fetchone()['album'],'Edition')
+
+    def test_manual_album_requires_unambiguous_verified_metadata(self):
+        import edition_matching
+        with patch.object(edition_matching,'mb_get',AsyncMock(return_value={'release-groups':[]})):
+            response=self.client.post('/v1/requests/manual',headers={'Authorization':'Bearer old-token'},json={'kind':'album','artist':'Artist','title':'Album'})
+        self.assertEqual(response.status_code,400)
+        self.assertIn('one exact album',response.json()['detail'])
+        with self.module.connection() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM cassette_album_requests').fetchone()[0],0)
+
+    def test_manual_album_submits_verified_release_group(self):
+        import edition_matching,album_request_bridge_v6
+        gid='11111111-1111-1111-1111-111111111111';rid='22222222-2222-2222-2222-222222222222'
+        group={'id':gid,'title':'Album','primary-type':'Album','artist-credit':[{'artist':{'name':'Artist'}}]}
+        async def metadata(path,params):
+            if path=='release-group':return {'release-groups':[group]}
+            if path=='release':return {'releases':[{'id':rid,'title':'Album','status':'Official'}]}
+            return {'media':[{'track-count':12}]}
+        with patch.object(edition_matching,'mb_get',side_effect=metadata), patch.object(album_request_bridge_v6,'request_album',AsyncMock(return_value={'status':'requested'})) as request:
+            response=self.client.post('/v1/requests/manual',headers={'Authorization':'Bearer old-token'},json={'kind':'album','artist':'Artist','title':'Album'})
+        self.assertEqual(response.status_code,200,response.text)
+        payload=request.await_args.args[0];self.assertEqual((payload.release_group_mbid,payload.expected_tracks),(gid,12))
+
+    def test_recording_options_require_verified_matches(self):
+        import edition_matching,metadata_resolver_v1
+        rid='33333333-3333-3333-3333-333333333333'
+        with self.module.connection() as db:
+            db.execute("INSERT INTO proposals(id,user_id,artist,title,state,created) VALUES(?,?,?,?,?,?)",('ambiguous',self.user_id,'Artist','Song','needs_metadata',1))
+        search={'recordings':[{'id':rid,'title':'Song','disambiguation':'explicit','artist-credit':[{'artist':{'name':'Artist'}}]}]}
+        verified=AsyncMock(return_value=[(rid,'release','group','Album')])
+        with patch.object(edition_matching,'mb_get',AsyncMock(return_value=search)),patch.object(metadata_resolver_v1,'verified_recording_release_pairs',verified):
+            response=self.client.get('/v1/proposals/ambiguous/recording-options',headers={'Authorization':'Bearer old-token'})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['options'],[{'recording_mbid':rid,'version':'explicit','album':'Album'}])
+
+    def test_default_prefers_explicit_verified_recording(self):
+        import metadata_resolver_v1
+        clean='11111111-1111-1111-1111-111111111111';explicit='22222222-2222-2222-2222-222222222222'
+        with self.module.connection() as db:
+            db.execute("INSERT INTO proposals(id,user_id,artist,title,album,state,created) VALUES(?,?,?,?,?,?,?)",('pick',self.user_id,'Artist','Song','','needs_metadata',1))
+            user=dict(db.execute('SELECT * FROM users WHERE id=?',(self.user_id,)).fetchone())
+            proposal=dict(db.execute("SELECT * FROM proposals WHERE id='pick'").fetchone())
+        options={'options':[{'recording_mbid':clean,'version':'clean','album':'Album'},{'recording_mbid':explicit,'version':'explicit','album':'Album'}]}
+        pairs=[(explicit,'33333333-3333-3333-3333-333333333333','44444444-4444-4444-4444-444444444444','Album')]
+        client_class=httpx.AsyncClient
+        def handler(request):return httpx.Response(200,json={'status':'queued','task_id':'test'})
+        with patch.object(self.module,'linked_token',return_value='token'),patch.object(self.module,'proposal_recording_options',AsyncMock(return_value=options)),patch.object(metadata_resolver_v1,'verified_recording_release_pairs',AsyncMock(return_value=pairs)),patch.object(self.module.httpx,'AsyncClient',side_effect=lambda **kw:client_class(transport=httpx.MockTransport(handler),**kw)):
+            import asyncio
+            result=asyncio.run(self.module._submit_verified_cassette_track(user,'pick',proposal))
+        self.assertEqual(result['status'],'requested')
+        with self.module.connection() as db:
+            self.assertEqual(db.execute("SELECT recording_mbid FROM proposals WHERE id='pick'").fetchone()['recording_mbid'],explicit)
+
+    def test_live_status_uses_own_requested_recording_and_preserves_review(self):
+        mbid='66666666-6666-6666-6666-666666666666'
+        with self.module.connection() as db:
+            db.execute("INSERT INTO proposals(id,user_id,artist,title,state,recording_mbid,created) VALUES(?,?,?,?,?,?,?)",('live',self.user_id,'Artist','Track','requested',mbid,1))
+            db.execute("INSERT INTO proposals(id,user_id,artist,title,state,created) VALUES(?,?,?,?,?,?)",('review',self.user_id,'Artist','Review','needs_metadata',2))
+        def handler(request):
+            return httpx.Response(200,json={'items':[{'musicbrainz_id':mbid,'request_kind':'track','status':'downloading','progress':37}] if request.url.path.endswith('/active') else []})
+        client_class=httpx.AsyncClient
+        with patch.object(self.module,'linked_token',return_value='token'),patch.object(self.module.httpx,'AsyncClient',side_effect=lambda **kw:client_class(transport=httpx.MockTransport(handler),**kw)):
+            response=self.client.get('/v1/requests/live-status',headers={'Authorization':'Bearer old-token'})
+        self.assertEqual(response.status_code,200,response.text)
+        entries={item['id']:item['text'] for item in response.json()['requests']}
+        self.assertEqual(entries['live'],'Downloading • 37%')
+        self.assertTrue(entries['review'].startswith('Needs review'))
+
+    def test_download_events_translate_and_stream_for_owned_requests(self):
+        import asyncio,json
+        from contextlib import asynccontextmanager
+        mbid='66666666-6666-6666-6666-666666666666'
+        with self.module.connection() as db:
+            db.execute("INSERT INTO proposals(id,user_id,artist,title,state,recording_mbid,created) VALUES(?,?,?,?,?,?,?)",('event-song',self.user_id,'Artist','Track','requested',mbid,1))
+            user=dict(db.execute('SELECT * FROM users WHERE id=?',(self.user_id,)).fetchone())
+        class FakeResponse:
+            def raise_for_status(self):pass
+            def json(self):return {'items':[{'id':'task-1','download_type':'track','recording_mbid':mbid,'status':'searching'}]}
+            async def aiter_lines(self):
+                for line in ('event: progress','data: {"progress_percent":37}',''):
+                    yield line
+        class FakeClient:
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
+            async def get(self,*args,**kwargs):return FakeResponse()
+            @asynccontextmanager
+            async def stream(self,*args,**kwargs):yield FakeResponse()
+        async def run():
+            with patch.object(self.module,'linked_token',return_value='token'),patch.object(self.module.httpx,'AsyncClient',return_value=FakeClient()):
+                response=await self.module.live_request_events(user=user)
+                iterator=response.body_iterator
+                self.assertIn('connected',await anext(iterator))
+                initial=await anext(iterator);self.assertEqual(json.loads(initial[6:])['text'],'Searching')
+                update=await asyncio.wait_for(anext(iterator),1);self.assertEqual(json.loads(update[6:])['text'],'Downloading • 37%')
+                await iterator.aclose()
+        asyncio.run(run())
+        self.assertEqual(self.module._download_event_text('status',{'status':'retrying'}),'Switching source')
+        self.assertEqual(self.module._download_event_text('complete',{'status':'failed','error':'No source'}),'Failed • No source')
+
+    def test_request_and_alias_redirect_to_canonical_profiles(self):
+        response=self.client.get('/requests',follow_redirects=False)
+        self.assertEqual(response.status_code,307)
+        self.assertEqual(response.headers['location'],'/')
+        response=self.client.get('https://profile.hippocampus-polaris.ts.net/requests?source=test',follow_redirects=False)
+        self.assertEqual(response.status_code,307)
+        self.assertEqual(response.headers['location'],'https://profiles.hippocampus-polaris.ts.net/requests?source=test')
+
     def test_scheduler_retry_uses_linked_personal_account(self):
         from contextlib import contextmanager
         scheduler=importlib.import_module('peer_scheduler_api').scheduler

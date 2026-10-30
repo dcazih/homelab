@@ -1,0 +1,25 @@
+# Layer onto your existing compose.yml and compose.profiles.yml.
+# Does not expose DroppedNeedle, Navidrome, or the Bridge publicly.
+services:
+  cassette-proxy:
+    build: ./cassette-proxy
+    environment:
+      CASSETTE_PERSONALIZATION_ENABLED: 'true'
+      NAVIDROME_UPSTREAM: http://host.docker.internal:4533
+      CASSETTE_STATE_DB: /data/cassette-state.sqlite
+      CASSETTE_PERSONAL_CACHE_SECONDS: '0'
+      DROPPEDNEEDLE_URL: http://droppedneedle:8688
+      DROPPEDNEEDLE_BEARER_TOKEN: ${DROPPEDNEEDLE_BEARER_TOKEN:-}
+      MUSIC_BRIDGE_URL: http://music-profiles:8765
+      CASSETTE_BRIDGE_INTERNAL_KEY: ${CASSETTE_BRIDGE_INTERNAL_KEY:?Set CASSETTE_BRIDGE_INTERNAL_KEY in .env}
+      MUSICBRAINZ_USER_AGENT: ${MUSICBRAINZ_USER_AGENT:?Set MUSICBRAINZ_USER_AGENT to your app name and contact}
+    volumes:
+      - cassette-state:/data
+    networks:
+      - music-request
+    restart: unless-stopped
+  music-profiles:
+    environment:
+      CASSETTE_BRIDGE_INTERNAL_KEY: ${CASSETTE_BRIDGE_INTERNAL_KEY:?Set CASSETTE_BRIDGE_INTERNAL_KEY in .env}
+volumes:
+  cassette-state:
