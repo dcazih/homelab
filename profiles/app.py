@@ -669,7 +669,8 @@ def _request_display_text(state,message):
 async def live_request_status(user=Depends(require_user)):
     with connection() as db:
         songs=[dict(row) for row in db.execute('SELECT id,recording_mbid,state,message FROM proposals WHERE user_id=? AND dismissed_at IS NULL ORDER BY created DESC LIMIT 500',(user['id'],))]
-        albums=[dict(row) for row in db.execute('SELECT release_group_mbid,state,message FROM cassette_album_requests WHERE user_id=? AND dismissed_at IS NULL ORDER BY created DESC LIMIT 200',(user['id'],))]
+        albums=[dict(row) for row in db.execute('SELECT * FROM cassette_album_requests WHERE user_id=? AND dismissed_at IS NULL ORDER BY created DESC LIMIT 200',(user['id'],))]
+    album_records={row['release_group_mbid']:row for row in albums}
     requests=[{'kind':'track','id':row['id'],'mbid':row['recording_mbid'],'state':row['state'],'text':_request_display_text(row['state'],row['message'])} for row in songs]
     requests += [{'kind':'album','id':row['release_group_mbid'],'mbid':row['release_group_mbid'],'state':row['state'],'text':_request_display_text(row['state'],row['message'])} for row in albums]
     waiting={'requested','awaiting_approval','importing','submission_uncertain'}
@@ -697,7 +698,23 @@ async def live_request_status(user=Depends(require_user)):
             progress=item.get('progress_percent',item.get('progress'))
             if isinstance(progress,(int,float)) and not isinstance(progress,bool) and 0<=progress<=100:
                 detail=f'{progress:.0f}%'
-            if raw in ('imported','completed'):detail='Waiting for Navidrome to confirm and save'
+            if raw in ('imported','completed'):
+                # The transfer engine is finished. Reconcile the actual Navidrome
+                # catalog before displaying a terminal result; this prevents its
+                # history and active feeds from alternately rendering two labels.
+                if row['kind']=='album':
+                    try:
+                        import album_request_bridge_v6 as albums
+                        record=album_records.get(row['id'])
+                        if record: await albums._reconcile_one(user,record)
+                        with connection() as db:
+                            saved=db.execute('SELECT state,message FROM cassette_album_requests WHERE user_id=? AND release_group_mbid=?',(user['id'],row['id'])).fetchone()
+                        if saved:
+                            row['state']=saved['state'];row['text']=_request_display_text(saved['state'],saved['message'])
+                            continue
+                    except Exception as exc:
+                        LOG.warning('Completed album reconciliation skipped (%s)',type(exc).__name__)
+                label='Imported';detail='Waiting for Navidrome to confirm and save'
             row['text']=label+(' • '+str(detail) if detail else '')
     except (httpx.HTTPError,ValueError,TypeError,AttributeError):
         # Retain the Bridge's most recent known state if DroppedNeedle is unavailable.
@@ -756,7 +773,9 @@ async def live_request_events(user=Depends(require_user)):
                                     try:
                                         payload=json.loads('\n'.join(data));text=_download_event_text(event,payload) if isinstance(payload,dict) else None
                                         if text:await queue.put({'kind':kind,'id':request_id,'text':text})
-                                        if event=='complete':return
+                                        if event=='complete':
+                                            await queue.put({'kind':'refresh'})
+                                            return
                                     except (ValueError,TypeError):pass
                                 event='';data=[]
                             elif line.startswith('event:'):event=line[6:].strip()
