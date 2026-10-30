@@ -129,11 +129,9 @@ def auth_page(tx_id, client_name, redirect_uri, scope):
     name=html.escape(client_name, quote=True)
     callback=html.escape(urlparse(redirect_uri).netloc, quote=True)
     grants=html.escape(scope, quote=True)
-    return f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Muse to Family Music</title>
-<style>body{{background:#10151b;color:#f3f6fa;font:16px system-ui;margin:0;padding:30px}}main{{max-width:450px;margin:9vh auto;background:#202b36;padding:26px;border-radius:14px}}input,button{{font:inherit;padding:12px;width:100%;box-sizing:border-box;border-radius:8px;margin:12px 0}}input{{background:#10151b;border:1px solid #789;color:#fff}}button{{background:#267bd3;color:#fff;border:0;cursor:pointer}}p{{line-height:1.5;color:#c9d4dd}}</style>
-<main><h1>Link your Family Music profile</h1><p>Application: <strong>{name}</strong>. Callback destination: <code>{callback}</code>. Requested permissions: <code>{grants}</code>.</p><p>Only continue if this is the Muse connector you intended to link.</p><p>This lets Muse search your music and make requests using <strong>your own Bridge profile</strong>. No administrator access is granted.</p>
-<form method="post" action="/authorize/confirm"><input type="hidden" name="transaction" value="{tx}"><label>Bridge profile token<input type="password" name="profile_token" autocomplete="off" required minlength="20" maxlength="256"></label><button type="submit">Authorize music tools</button></form>
-<p>Use the personal token from your Music Profiles Bridge, not PROFILE_ADMIN_KEY. You can revoke this connection later.</p></main></html>'''
+    return f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Muse • Music Profiles</title>
+<style>@font-face{{font-family:Sora;src:url('https://profiles.hippocampus-polaris.ts.net/assets/sora.ttf')}}@font-face{{font-family:Geist;src:url('https://profiles.hippocampus-polaris.ts.net/assets/geist.ttf')}}@font-face{{font-family:Inter;src:url('https://profiles.hippocampus-polaris.ts.net/assets/inter.ttf')}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:radial-gradient(circle at 10% 0%,#203448,#10151b 48%);color:#e8ebf0;font:16px Inter,system-ui;display:grid;place-items:center;padding:24px}}main{{width:min(430px,100%);background:#1b222a;border:1px solid #374250;border-radius:14px;padding:30px;box-shadow:0 22px 60px #0008}}.brand{{font:700 14px Geist,sans-serif;letter-spacing:.04em;color:#a9d7fb;text-transform:uppercase}}h1{{font:700 34px/1.1 Geist,system-ui;margin:12px 0 10px;letter-spacing:-.035em}}p{{line-height:1.5;color:#aebcca;margin:0 0 20px}}label{{display:block;font-size:14px;font-weight:500;color:#c9d4e2;margin-top:14px}}input,button{{width:100%;font:inherit;border-radius:12px;padding:12px;border:0}}input{{margin-top:7px;background:#111922;border:1px solid #566476;color:#fff}}button{{margin-top:20px;background:#246cbb;color:#fff;font:600 14px Geist,sans-serif;cursor:pointer;transition:box-shadow .18s,transform .18s}}button:hover{{box-shadow:inset 0 0 0 999px #ffffff24}}button:active{{transform:scale(.98)}}small{{display:block;color:#8fa1b0;margin-top:18px;font-size:12px}}code{{font-family:ui-monospace,monospace;font-size:12px;color:#d7e3ed}}</style>
+<main><div class="brand">Music Profiles × Muse</div><h1>Sign in to your library</h1><p>Use your Navidrome account to allow <strong>{name}</strong> to search your music and make requests for your profile.</p><form method="post" action="/authorize/confirm"><input type="hidden" name="transaction" value="{tx}"><label>Navidrome username<input name="navidrome_username" autocomplete="username" required maxlength="80"></label><label>Navidrome password<input type="password" name="navidrome_password" autocomplete="current-password" required maxlength="256"></label><button type="submit">Authorize Music Tools</button></form><small>Callback: <code>{callback}</code><br>Permissions: <code>{grants}</code><br>Your password is sent only to Music Profiles to verify this sign-in and is never stored by Muse.</small></main></html>'''
 
 @app.get('/authorize', response_class=HTMLResponse)
 async def authorize(request:Request):
@@ -182,21 +180,42 @@ async def bridge_post(path, profile, obj):
             return r.json()
     except (httpx.RequestError,ValueError) as e: raise HTTPException(502,'Bridge unreachable or invalid response') from e
 
+async def bridge_login(username, password):
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r=await client.post(BRIDGE+'/v1/auth/login',json={
+                'navidrome_username':username,
+                'navidrome_password':password,
+            })
+            if r.status_code == 401:
+                raise HTTPException(401,'Navidrome sign-in failed or this account has not joined Music Profiles')
+            if r.status_code >= 400:
+                raise HTTPException(502,'Music Profiles sign-in is temporarily unavailable')
+            data=r.json()
+            token=data.get('profile_token')
+            if not isinstance(token,str) or not token:
+                raise HTTPException(502,'Music Profiles did not create a session')
+            return token, data.get('username','')
+    except httpx.RequestError as e:
+        raise HTTPException(502,'Music Profiles sign-in is unavailable') from e
+
 @app.post('/authorize/confirm')
 async def authorize_confirm(request:Request):
     login_throttle(request.client.host if request.client else 'unknown')
     form=await request.form()
     tx=str(form.get('transaction',''))
-    profile_token=str(form.get('profile_token',''))
-    if len(tx)>256 or not 20 <= len(profile_token) <= 256: raise HTTPException(400,'Invalid authorization form')
+    username=str(form.get('navidrome_username','')).strip()
+    password=str(form.get('navidrome_password',''))
+    if len(tx)>256 or not 1 <= len(username) <= 80 or not 1 <= len(password) <= 256: raise HTTPException(400,'Invalid authorization form')
     with db() as c:
         sess=c.execute('SELECT * FROM auth_sessions WHERE id_hash=? AND expires>?',(sha(tx),now())).fetchone()
     if not sess: raise HTTPException(400,'Authorization expired. Start again from Muse.')
     try:
+        profile_token, bridge_username=await bridge_login(username,password)
         me=await bridge_get('/v1/me',profile_token)
     except HTTPException:
         raise HTTPException(401,'Bridge profile token invalid or Bridge unavailable')
-    username=me.get('username')
+    username=me.get('username') or bridge_username
     if not username: raise HTTPException(502,'Bridge did not return a profile identity')
     code=issue()
     with db() as c:

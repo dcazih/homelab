@@ -34,7 +34,7 @@ scopes:
 
 1. Check whether the `Family Music` connector is already available and authorized. If it is, use it; do not create a duplicate.
 2. If it is not connected and Muse supports adding custom remote MCP connectors, register it using the `server_url` above. Use the normal OAuth discovery and supported client-registration flow. Do not invent client IDs, client secrets, access tokens, or manually configured OAuth endpoints.
-3. Start the OAuth authorization flow for the family member making the request. The connector's authorization page should identify **Family Music** and ask for that person's **Bridge profile token**. The person enters the token on the connector's secure HTTPS authorization page, not in chat. Never request the Bridge administrator key.
+3. Start the OAuth authorization flow for the family member making the request. The connector's authorization page identifies **Family Music** and signs the person in with their **Navidrome username and password**. Those credentials are sent directly to Music Profiles only to verify the sign-in; Muse does not receive or store them. Never request the Bridge administrator key.
 4. When authorization completes, discover the MCP tools and their current input schemas. Check that the required scopes are granted. Each family member must separately authorize their own profile.
 5. Run a harmless `music_search` as a connectivity and authorization test. Do not mark the integration ready until a real authenticated tool response succeeds.
 6. If Muse cannot register custom MCP connectors or cannot complete the OAuth flow, report the exact missing capability or error. Do not claim a connection was created.
@@ -103,7 +103,7 @@ If the connector is not linked, offer to start its OAuth connection flow before 
 
 - Use OAuth 2.0 authorization with PKCE; obtain only the necessary `music:read` and `music:write` grants.
 - Each family member connects their own existing Music Profiles Bridge profile.
-- The **Bridge profile token** must be supplied only to the connector's HTTPS authorization page, never pasted into Muse conversations or memory files.
+- Navidrome credentials are entered only on the connector's HTTPS authorization page, never pasted into Muse conversations or memory files.
 - Never use, request, display, or store the Bridge administrator key in Muse's memory.
 - Never expose OAuth access tokens, refresh tokens, API credentials, or passwords in responses.
 - Never make changes to another person's library without that person's authorization.
