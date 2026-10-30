@@ -12,6 +12,9 @@
     },
     "svc:profiles": {
       "endpoints": {"tcp:443": "http://192.168.1.152:8765"}
+    },
+    "svc:muse": {
+      "endpoints": {"tcp:443": "http://192.168.1.152:8788"}
     }
   }
 }

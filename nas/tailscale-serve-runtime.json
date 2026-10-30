@@ -12,6 +12,10 @@
       "TCP": {"443": {"HTTPS": true}},
       "Web": {"sona.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8791"}}}}
     },
+    "svc:muse": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"muse.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8788"}}}}
+    },
     "svc:profile": {
       "TCP": {"443": {"HTTPS": true}},
       "Web": {"profile.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8765"}}}}
