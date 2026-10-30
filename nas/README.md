@@ -14,4 +14,6 @@ Tailscale v1.104.4 restores the route configuration after a container restart bu
 
 Public route checks: `https://discover.hippocampus-polaris.ts.net/` returns DroppedNeedle, `https://music.hippocampus-polaris.ts.net/` returns Navidrome, `https://profile.hippocampus-polaris.ts.net/` and `https://profiles.hippocampus-polaris.ts.net/` return Bridge, and `https://sona.hippocampus-polaris.ts.net/` returns the Aonsoku-based Sona client.
 
+TrueNAS cron job **Deploy Sona Git updates** checks the `dcazih/Sona` `sona-cassette-mobile` branch every minute. `update-sona.sh` uses a nonblocking lock, skips unchanged commits, permits fast-forward updates only, redeploys the NAS application after a change, and records the commit only after a successful redeploy. The Git checkout uses the public HTTPS remote, so it does not depend on a NAS GitHub SSH key.
+
 For rollback, first stop or drain the NAS Tailscale host for the affected services. The original four services can be advertised again from the Mac with `tailscale serve advertise svc:discover`, `svc:music`, `svc:profile`, and `svc:profiles`; `svc:sona` should remain drained unless another host serves the Aonsoku fork. Start the preserved Mac music containers only after verifying their original state and ports. Do not delete either NAS or Mac state or custom images during rollback.
