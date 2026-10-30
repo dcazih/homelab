@@ -8,6 +8,10 @@
       "TCP": {"443": {"HTTPS": true}},
       "Web": {"music.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:4533"}}}}
     },
+    "svc:sona": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"sona.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8791"}}}}
+    },
     "svc:profile": {
       "TCP": {"443": {"HTTPS": true}},
       "Web": {"profile.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8765"}}}}

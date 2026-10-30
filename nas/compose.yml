@@ -96,6 +96,18 @@ services:
     depends_on: [cassette-proxy, music-profiles]
     restart: unless-stopped
 
+  sona-aonsoku:
+    build: /mnt/Pool/music-server/source/sona-aonsoku
+    image: homelab/sona-aonsoku:nas
+    environment:
+      SERVER_URL: https://music.hippocampus-polaris.ts.net
+      HIDE_SERVER: 'false'
+      SERVER_TYPE: navidrome
+      APP_AUTH_TYPE: token
+    ports:
+      - '192.168.1.152:8791:8080'
+    restart: unless-stopped
+
   muse-music:
     build: /mnt/Pool/music-server/source/muse-music-connector
     image: homelab/muse-music:nas-posix
