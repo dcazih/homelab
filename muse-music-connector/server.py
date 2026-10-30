@@ -314,13 +314,12 @@ async def album_request(profile, artist, album, release_group_mbid=''):
     # 'title' is the album name for kind=album. No release ID is required.
     if len(artist) > 180 or len(album) > 240:
         raise HTTPException(422, 'Artist or album exceeds Bridge v2 field limits')
-    payload = {'kind': 'album', 'artist': artist, 'title': album,
-               'source': 'muse'}
+    payload = {'kind': 'album', 'artist': artist, 'title': album}
     if release_group_mbid:
         if len(release_group_mbid) > 36:
             raise HTTPException(422, 'Release-group MBID too long')
         payload['release_group_mbid'] = release_group_mbid
-    response = await bridge_post('/v1/requests', profile, payload)
+    response = await bridge_post('/v1/requests/manual', profile, payload)
     return {'bridge_response': response, 'note': 'Bridge response only. Do not claim DroppedNeedle acceptance or download until confirmed.'}
 
 
@@ -342,24 +341,24 @@ async def execute_tool(name,args,profile):
             raise HTTPException(422,'Artist/title/album exceeds Bridge v2 field limits')
         if len(args.get('recording_mbid','')) > 36:
             raise HTTPException(422,'Recording MBID too long')
-        payload={'kind':'track', 'artist':args['artist'], 'title':args['title'], 'source':'muse'}
+        payload={'kind':'song', 'artist':args['artist'], 'title':args['title']}
         if args.get('album'):
             payload['album']=args['album']
         if args.get('recording_mbid'):
             payload['recording_mbid']=args['recording_mbid']
-        response=await bridge_post('/v1/requests',profile,payload)
+        response=await bridge_post('/v1/requests/manual',profile,payload)
         return {'bridge_response':response,'note':'Bridge response only. Check request status before claiming DroppedNeedle acceptance or download.'}
     if name=='music_request_album':
         return await album_request(profile,args['artist'],args['album'],args.get('release_group_mbid',''))
     if name=='music_list_requests':
         output={}
-        for kind,path in (('requests','/v1/requests'),('proposals','/v1/proposals')):
+        for kind,path in (('requests','/v1/proposals'),):
             try:output[kind]=await bridge_get(path,profile)
             except HTTPException as e:output[kind]={'error':e.detail}
         return output
     if name=='music_get_request':
         if not re.fullmatch('[A-Za-z0-9_-]{1,80}',args['request_id']):raise HTTPException(422,'Invalid request ID')
-        return await bridge_get('/v1/requests/'+args['request_id'],profile)
+        return await bridge_get('/v1/proposals/'+args['request_id'],profile)
 
 @app.post('/mcp')
 async def mcp(request:Request):
