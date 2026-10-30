@@ -24,7 +24,10 @@ if [ "$remote_commit" = "$deployed_commit" ]; then
 fi
 
 git_repo checkout --quiet "$branch"
-git_repo merge --quiet --ff-only FETCH_HEAD
+# The NAS clone is intentionally shallow. A rewritten remote branch can have
+# no shared history with its old shallow tip, so deploy the exact fetched tip.
+# This checkout is source-only; application state lives outside this directory.
+git_repo reset --quiet --hard FETCH_HEAD
 
 if midclt call -j app.redeploy homelab-music; then
     printf '%s\n' "$remote_commit" > "$state/deployed-commit"
