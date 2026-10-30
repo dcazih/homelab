@@ -1,0 +1,20 @@
+{
+  "Services": {
+    "svc:discover": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"discover.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8688"}}}}
+    },
+    "svc:music": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"music.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:4533"}}}}
+    },
+    "svc:profile": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"profile.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8765"}}}}
+    },
+    "svc:profiles": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"profiles.hippocampus-polaris.ts.net:443": {"Handlers": {"/": {"Proxy": "http://192.168.1.152:8765"}}}}
+    }
+  }
+}
