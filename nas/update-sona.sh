@@ -11,6 +11,7 @@ log="$state/deploy.log"
 image=homelab/sona-aonsoku:nas
 compose=/mnt/.ix-apps/app_configs/homelab-music/versions/1.0.0/templates/rendered/docker-compose.yaml
 service=sona-aonsoku
+host_port=192.168.1.152:8791
 
 mkdir -p "$state"
 exec 9>"$lock"
@@ -42,6 +43,15 @@ fi
 log_line "recreating $service for $remote_commit"
 # Recreate only Sona. A full TrueNAS app redeploy restarts Navidrome,
 # DroppedNeedle, slskd, and all Bridges, which makes the NAS appear down.
+# TrueNAS can leave the previous ix-* container running while the rendered
+# compose project creates its replacement. Remove only containers that own
+# Sona's published port so the replacement cannot fail with a port conflict.
+for container in $(/usr/bin/docker ps -q --filter "publish=$host_port"); do
+    name=$(/usr/bin/docker inspect --format '{{.Name}}' "$container" 2>/dev/null || true)
+    log_line "releasing $host_port from ${name#/}"
+    /usr/bin/docker rm -f "$container" >> "$log" 2>&1
+done
+
 if /usr/bin/docker compose -f "$compose" up -d --no-deps --force-recreate "$service" >> "$log" 2>&1; then
     printf '%s\n' "$remote_commit" > "$state/deployed-commit"
     rm -f "$state/failed-commit"
