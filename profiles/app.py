@@ -84,6 +84,11 @@ class ReconnectIn(BaseModel):
 class LoginIn(BaseModel):
     navidrome_username:str=Field(min_length=1,max_length=80)
     navidrome_password:str=Field(min_length=1,max_length=256)
+class SonaTokenIn(BaseModel):
+    navidrome_username:str=Field(min_length=1,max_length=80)
+    token:str=Field(min_length=4,max_length=512)
+    salt:str=Field(min_length=8,max_length=128)
+    auth_type:int=Field(ge=0,le=1)
 class AdminLoginIn(BaseModel):
     key:str=Field(min_length=1)
 class AdminPasswordResetIn(BaseModel):
@@ -505,6 +510,30 @@ async def login(req:LoginIn):
     token=secrets.token_urlsafe(32)
     with connection() as d:
         d.execute('UPDATE users SET secret=? WHERE id=?',(candidate['secret'],row['id']))
+        d.execute('INSERT INTO profile_sessions VALUES(?,?,?)',(digest(token),row['id'],int(time.time())))
+    return {'profile_token':token,'username':row['username']}
+
+@app.post('/v1/auth/sona-token')
+async def login_from_sona(req:SonaTokenIn):
+    """Exchange Sona's validated Subsonic token for a profile session."""
+    with connection() as d:
+        row=d.execute('SELECT * FROM users WHERE username=? COLLATE NOCASE',(req.navidrome_username,)).fetchone()
+    if not row: err('This Navidrome account has not joined Music Profiles',401)
+    params={'u':row['username'],'v':'1.16.1','c':'sona-profile-handoff','f':'json'}
+    if req.auth_type==1:
+        params.update({'t':req.token,'s':req.salt})
+    else:
+        params['p']=req.token
+    try:
+        async with httpx.AsyncClient(timeout=12,trust_env=False) as client:
+            response=await client.get(f'{NAV}/rest/ping.view',params=params)
+            response.raise_for_status()
+            payload=response.json().get('subsonic-response',{})
+    except (httpx.HTTPError,ValueError):
+        err('Navidrome sign-in validation failed',401)
+    if payload.get('status')!='ok': err('Navidrome sign-in validation failed',401)
+    token=secrets.token_urlsafe(32)
+    with connection() as d:
         d.execute('INSERT INTO profile_sessions VALUES(?,?,?)',(digest(token),row['id'],int(time.time())))
     return {'profile_token':token,'username':row['username']}
 
