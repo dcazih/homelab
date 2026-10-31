@@ -8,7 +8,7 @@ The NAS deployment has copied state, private environment files, and a starter me
 
 ## Tailscale cutover
 
-The tailnet services `discover`, `music`, `profile`, `profiles`, and `sona` are hosted by the NAS. `sona` serves the `dcazih/Sona` Aonsoku fork from the independent `sona-aonsoku` container on NAS port 8791; the earlier custom `cassette-web` client remains on port 8790. The NAS is tagged `tag:music-server`; the Mac host is drained but retained. `tailscale-serve-runtime.json` supplies `/etc/tailscale/serveconfig.json` in the official TrueNAS Tailscale app through `TS_SERVE_CONFIG`. `tailscale-services.json` is the alternate versioned CLI format; do not pass that file to `TS_SERVE_CONFIG`.
+The tailnet services `discover`, `music`, `profile`, `profiles`, and `sona` are hosted by the NAS. `sona` serves the `dcazih/Sona` Aonsoku fork from the independent `sona-aonsoku` container on NAS port 8791. The NAS is tagged `tag:music-server`; the Mac host is drained but retained. `tailscale-serve-runtime.json` supplies `/etc/tailscale/serveconfig.json` in the official TrueNAS Tailscale app through `TS_SERVE_CONFIG`. `tailscale-services.json` is the alternate versioned CLI format; do not pass that file to `TS_SERVE_CONFIG`.
 
 Tailscale v1.104.4 restores the route configuration after a container restart but can lose its service advertisements. TrueNAS cron job **Restore NAS Tailscale music service advertisements** (ID 1) runs every minute and advertises all five services. The versioned loop is in `tailscale-advertise.sh`; it does not change proxy targets. A restart test confirmed that the public routes return after this task runs.
 

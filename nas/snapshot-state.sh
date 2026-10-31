@@ -24,4 +24,3 @@ copy_data muse-music /data muse
 backup_db muse-music /data muse stage2.sqlite3
 copy_data cassette-event-sync /state event-sync
 backup_db cassette-event-sync /state event-sync events.db
-copy_data music-cassette-web /data cassette-web

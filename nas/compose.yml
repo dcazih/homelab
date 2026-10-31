@@ -81,21 +81,6 @@ services:
     depends_on: [music-profiles]
     restart: unless-stopped
 
-  cassette-web:
-    build: /mnt/Pool/music-server/source/cassette-web
-    image: homelab/sona:nas-posix
-    user: '3000:3000'
-    environment:
-      BRIDGE_URL: http://music-profiles:8765
-      CASSETTE_URL: http://cassette-proxy:8787
-      SESSION_KEY_FILE: /data/session.key
-    volumes:
-      - /mnt/Pool/music-server/state/cassette-web:/data
-    ports:
-      - '192.168.1.152:8790:8790'
-    depends_on: [cassette-proxy, music-profiles]
-    restart: unless-stopped
-
   sona-aonsoku:
     build: /mnt/Pool/music-server/source/sona-aonsoku
     image: homelab/sona-aonsoku:nas

@@ -15,5 +15,5 @@ check Navidrome 4533 /
 check DroppedNeedle 8688 /
 check Profiles 8765 /health
 check Proxy 8787 /health
-check Sona 8790 /health
+check Sona 8791 /
 check Muse 8788 /health
