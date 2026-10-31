@@ -9,6 +9,8 @@ state=/mnt/Pool/music-server/state/sona-aonsoku
 lock=/var/run/update-sona.lock
 log="$state/deploy.log"
 image=homelab/sona-aonsoku:nas
+compose=/mnt/.ix-apps/app_configs/homelab-music/versions/1.0.0/templates/rendered/docker-compose.yaml
+service=sona-aonsoku
 
 mkdir -p "$state"
 exec 9>"$lock"
@@ -37,8 +39,10 @@ if ! /usr/bin/docker build -t "$image" "$repo" >> "$log" 2>&1; then
     exit 1
 fi
 
-log_line "redeploying $remote_commit"
-if midclt call -j app.redeploy homelab-music >> "$log" 2>&1; then
+log_line "recreating $service for $remote_commit"
+# Recreate only Sona. A full TrueNAS app redeploy restarts Navidrome,
+# DroppedNeedle, slskd, and all Bridges, which makes the NAS appear down.
+if /usr/bin/docker compose -f "$compose" up -d --no-deps --force-recreate "$service" >> "$log" 2>&1; then
     printf '%s\n' "$remote_commit" > "$state/deployed-commit"
     rm -f "$state/failed-commit"
     log_line "deployed $remote_commit"
