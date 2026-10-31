@@ -11,7 +11,7 @@ log="$state/deploy.log"
 image=homelab/sona-aonsoku:nas
 compose=/mnt/.ix-apps/app_configs/homelab-music/versions/1.0.0/templates/rendered/docker-compose.yaml
 service=sona-aonsoku
-host_port=192.168.1.152:8791
+host_port=8791
 
 mkdir -p "$state"
 exec 9>"$lock"
