@@ -59,7 +59,7 @@ window.addEventListener('message',event=>{
   const upload=document.getElementById('upload');
   if(!dashboard||dashboard.classList.contains('hidden')||!upload)return;
   upload.scrollIntoView({
-    behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth',
+    behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth',
     block:'start',
   });
 });
