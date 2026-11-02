@@ -305,6 +305,8 @@ def auth_grant(request):
     return {'username':row['username'],'profile_token':bridge_token,'scope':row['scope']}
 
 TOOLS=[
+ {'name':'music_my_profile','description':'Read-only. Identify which family Music Profiles account this Muse connection is authorized for, including private playlist name and count.',
+  'inputSchema':{'type':'object','properties':{},'additionalProperties':False}},
  {'name':'music_search','description':'Read-only. Search the authenticated family member’s Navidrome catalog by exact artist and track title. Never adds or requests music.',
   'inputSchema':{'type':'object','properties':{'artist':{'type':'string'},'title':{'type':'string'}},'required':['artist','title'],'additionalProperties':False}},
  {'name':'music_add_existing','description':'Write. Add an explicitly selected existing Navidrome song ID to the authenticated family member’s private My Music playlist. Does not duplicate audio files.',
@@ -354,6 +356,7 @@ async def execute_tool(name,args,profile):
         raise HTTPException(422,'Invalid tool arguments')
     if any(not isinstance(v,str) or not v.strip() or len(v)>250 for v in args.values()):
         raise HTTPException(422,'Music identifiers must be nonempty strings under 251 characters')
+    if name=='music_my_profile': return await bridge_get('/v1/me',profile)
     if name=='music_search': return await bridge_get('/v1/search',profile,{'artist':args['artist'],'title':args['title']})
     if name=='music_add_existing':return await bridge_post('/v1/my-music/add',profile,{'navidrome_song_id':args['song_id']})
     if name=='music_request_song':
@@ -374,9 +377,13 @@ async def execute_tool(name,args,profile):
         return await album_request(profile,args['artist'],args['album'],args.get('release_group_mbid',''))
     if name=='music_list_requests':
         output={}
-        for kind,path in (('requests','/v1/proposals'),):
-            try:output[kind]=await bridge_get(path,profile)
-            except HTTPException as e:output[kind]={'error':e.detail}
+        for kind,path in (
+            ('songs','/v1/proposals'),
+            ('albums','/v1/album-requests'),
+            ('live_status','/v1/requests/live-status'),
+        ):
+            try: output[kind]=await bridge_get(path,profile)
+            except HTTPException as e: output[kind]={'error':e.detail}
         return output
     if name=='music_get_request':
         if not re.fullmatch('[A-Za-z0-9_-]{1,80}',args['request_id']):raise HTTPException(422,'Invalid request ID')
