@@ -57,11 +57,26 @@ def direct_credit_match(group, artist):
 def group_type_allowed(group):
     primary = group.get('primary-type')
     secondary = set(group.get('secondary-types') or [])
-    return primary in _ALLOWED_TYPES or (primary == 'Other' and bool(secondary & _ALLOWED_OTHER))
+    # Real official multi-track releases can be unclassified in MusicBrainz.
+    # The caller MUST separately verify an official edition with >= 2 tracks.
+    # Known Singles/Broadcast/etc. still fail immediately.
+    return (primary in _ALLOWED_TYPES
+            or (primary == 'Other' and bool(secondary & _ALLOWED_OTHER))
+            or primary is None)
 
 
 def title_match(group, title):
-    return bool(fold(title)) and fold(group.get('title')) == fold(title)
+    requested = fold(title)
+    actual = str(group.get('title') or '')
+    if not requested:
+        return False
+    if fold(actual) == requested:
+        return True
+    # Only permit a deliberately separated extension of the title, not a
+    # generic prefix like "The Blueprint" vs "The Blueprint 2".
+    if '//' in actual:
+        return fold(actual.split('//', 1)[0]) == requested
+    return False
 
 
 def _escape_query(value):
@@ -318,6 +333,8 @@ async def resolve_album(artist, title, mb_get, release_group_mbid=None):
         mtype=match_reason[group['id']]
         if group['id'] in title_from_release:
             mtype += '+release_title'
+        elif fold(group.get('title')) != fold(title):
+            mtype += '+canonical_title_extension'
         return _result('matched',group=group,match_type=mtype)
     if len(eligible) > 1:
         return _result('ambiguous',candidates=eligible,
