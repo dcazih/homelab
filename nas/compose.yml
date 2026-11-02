@@ -51,7 +51,7 @@ services:
     env_file: /mnt/Pool/music-server/private/bridge.env
     environment:
       NAVIDROME_URL: http://192.168.1.152:4533
-      DROPPEDNEEDLE_URL: http://droppedneedle:8688
+      DROPPEDNEEDLE_URL: http://192.168.1.152:8688
       PROFILE_DB: /data/profiles.db
       PEER_SCHEDULER_DB: /data/peer_scheduler.sqlite
       BRIDGE_POLL_SECONDS: '90'

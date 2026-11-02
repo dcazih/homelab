@@ -1438,3 +1438,6 @@ install_peer_scheduler(app, require_admin, scheduler_linked_token)
 
 # BRIDGE_METADATA_RECOVERY_V1 recheck worker
 import metadata_recovery_v1
+
+# Authenticated Sona catalogue and requests.
+import sona_catalog
