@@ -76,7 +76,7 @@ async def metadata(user, path, params=None):
 def album_item(row):
     group = str(row.get('musicbrainz_id') or row.get('id') or '')
     return {'id': group, 'kind': 'album', 'title': row.get('title', ''),
-            'artist': row.get('artist') or credit(row), 'year': row.get('year'), 'cover': artwork(group)}
+            'artist': row.get('artist') or credit(row), 'year': row.get('year'), 'releaseType': row.get('primary-type') or row.get('type') or 'Album', 'cover': artwork(group)}
 
 
 async def base_search(user, query):
@@ -144,7 +144,12 @@ async def artist(artist_id: str, user=Depends(core.require_user)):
     artist_id = valid_id(artist_id)
     data = await editions.mb_get('release-group', {'artist': artist_id, 'inc': 'artist-credits', 'limit': 100})
     rows = data.get('release-groups') or []
-    return {'albums': [album_item(row) for row in rows], 'title': credit(rows[0]) if rows else 'Artist'}
+    popular = await metadata(user, '/api/v1/artists/' + artist_id + '/top-songs', {'count': 16})
+    songs = [{'id': row['recording_mbid'], 'kind': 'song', 'title': row['title'], 'artist': row['artist_name'],
+              'album': row.get('release_name') or '', 'albumId': row.get('release_group_mbid') or '',
+              'cover': artwork(row.get('release_group_mbid'))}
+             for row in popular.get('songs', []) if editions.MBID.fullmatch(str(row.get('recording_mbid') or ''))]
+    return {'albums': [album_item(row) for row in rows], 'songs': songs, 'title': credit(rows[0]) if rows else 'Artist'}
 
 
 async def album_metadata(user, album_id):
