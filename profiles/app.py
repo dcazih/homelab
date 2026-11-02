@@ -1295,6 +1295,8 @@ async def manual_request(body:ManualRequestIn,user=Depends(require_user)):
                       for m in details.get('media',[]) if isinstance(m,dict))
             if 1<=count<=1000:break
         if not 1<=count<=1000:err('Could not verify the album track count.',400)
+        if group.get('primary-type') is None and count<2:
+            err('Unclassified release group has too few tracks for an album; choose the correct release.',400)
     except (httpx.HTTPError,ValueError,TypeError,KeyError):
         err('Album metadata is unavailable. Try again later.',502)
     return await albums.request_album(albums.AlbumRequest(
