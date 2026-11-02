@@ -161,7 +161,16 @@ async def authorize(request:Request):
         raise HTTPException(400,'Invalid OAuth authorization parameters')
     with db() as c:
         client=c.execute('SELECT * FROM clients WHERE id=?',(client_id,)).fetchone()
-        if not client or redirect_uri not in json.loads(client['redirect_uris']):
+        if not client:
+            # Some Muse releases choose their own public client ID and never
+            # perform dynamic registration. Accept such IDs ONLY for Meta's
+            # exact, fixed callback. PKCE and per-user Navidrome sign-in remain
+            # mandatory; never allow an arbitrary redirect URI.
+            if (redirect_uri != MUSE_REDIRECT_URI or
+                not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}',client_id)):
+                raise HTTPException(400,'Unknown client or redirect URI')
+            client={'name':'Meta Muse','redirect_uris':json.dumps([MUSE_REDIRECT_URI])}
+        if redirect_uri not in json.loads(client['redirect_uris']):
             raise HTTPException(400,'Unknown client or redirect URI')
         tx=issue()
         c.execute('INSERT INTO auth_sessions VALUES(?,?,?,?,?,?,?,?)',(sha(tx),client_id,redirect_uri,challenge,state,scope,resource,now()+600))
