@@ -1,144 +1,179 @@
 #!/usr/bin/env bash
-# Deploy only the existing Music Profiles MCP connector for Meta Muse.
-# Does not modify the NAS administrator MCP, its port, or its root OAuth scopes.
+# Update the EXISTING Muse Music MCP container in place. No Compose files needed.
+# Does not modify TrueNAS root-admin MCP, Bridge databases, or music services.
 set -Eeuo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo 'Run this installer with sudo.' >&2
+  echo 'Run with sudo.' >&2
   exit 1
 fi
 
-NAS_IP='192.168.1.152'
-SOURCE='/mnt/Pool/music-server/source'
-STATE='/mnt/Pool/music-server/state/muse'
-PRIVATE='/mnt/Pool/music-server/private/muse.env'
-COMPOSE="$SOURCE/nas/compose.yml"
-OVERRIDE="$STATE/muse-public.override.yml"
+CONTAINER='muse-music'
 TAILSCALE_CONTAINER='ix-tailscale-tailscale-1'
+NAS_IP='192.168.1.152'
 PUBLIC_URL='https://homelab.hippocampus-polaris.ts.net:8443'
-SOURCE_REF="${MUSE_MUSIC_SOURCE_REF:-main}"
-if [ -z "$SOURCE_REF" ]; then SOURCE_REF='main'; fi
+MUSE_REF="${MUSE_MUSIC_SOURCE_REF:-main}"
 
-for program in curl docker python3; do
-  command -v "$program" >/dev/null || { echo "Missing $program" >&2; exit 1; }
+for cmd in curl docker python3; do
+  command -v "$cmd" >/dev/null 2>&1 || { echo "Missing $cmd" >&2; exit 1; }
 done
-docker compose version >/dev/null
+docker inspect "$CONTAINER" >/dev/null 2>&1 || {
+  echo "Container $CONTAINER was not found. No changes made." >&2
+  exit 1
+}
 docker inspect "$TAILSCALE_CONTAINER" >/dev/null 2>&1 || {
-  echo 'The TrueNAS Tailscale app container is missing.' >&2
+  echo "Tailscale app container was not found. No changes made." >&2
   exit 1
 }
-[ -f "$COMPOSE" ] || { echo "Missing $COMPOSE" >&2; exit 1; }
-[ -f "$PRIVATE" ] || { echo "Missing private Muse env file $PRIVATE" >&2; exit 1; }
-[ -d "$SOURCE/muse-music-connector" ] || {
-  echo 'Missing existing Muse connector source folder.' >&2
+docker exec "$CONTAINER" test -f /app/server.py || {
+  echo 'Existing container has no /app/server.py. No changes made.' >&2
   exit 1
 }
-if ! grep -q '^STAGE2_ENCRYPTION_KEY=' "$PRIVATE"; then
-  echo 'The existing Muse encryption key is missing; refusing to replace the service.' >&2
+python3 - "$CONTAINER" <<'PY'
+import json, subprocess, sys
+name=sys.argv[1]
+data=json.loads(subprocess.check_output(['docker','inspect',name], text=True))[0]
+if data.get('HostConfig',{}).get('ReadonlyRootfs'):
+    raise SystemExit('Container root filesystem is read-only; refusing in-place update.')
+mounts=data.get('Mounts',[])
+if not any(m.get('Destination')=='/data' for m in mounts):
+    raise SystemExit('Existing Muse /data mount missing; refusing to touch state.')
+if not any(x.startswith('STAGE2_ENCRYPTION_KEY=') and x.split('=',1)[1]
+           for x in data.get('Config',{}).get('Env',[])):
+    raise SystemExit('Existing Muse encryption key missing; refusing update.')
+ports=data.get('NetworkSettings',{}).get('Ports',{}).get('8788/tcp') or []
+if not any(str(p.get('HostPort'))=='8788' and p.get('HostIp') in ('192.168.1.152','0.0.0.0','')
+           for p in ports):
+    raise SystemExit('Muse is not published at NAS port 8788; no changes made.')
+print('Existing Muse container, encryption key, /data mount, and port verified.')
+PY
+
+curl --fail --silent --show-error --max-time 6 "http://$NAS_IP:8765/health" >/dev/null || {
+  echo 'Music Profiles Bridge on port 8765 is unavailable. No changes made.' >&2
   exit 1
+}
+
+umask 077
+TEMP="$(mktemp -d /tmp/muse-connector-patch.XXXXXXXX)"
+MODIFIED=0
+ORIGIN_PRESENT=0
+
+restore_on_error() {
+  code="$?"
+  trap - ERR
+  if [ "$MODIFIED" = 1 ]; then
+    echo 'Update failed. Restoring previous Muse connector code and public origin.' >&2
+    docker cp "$TEMP/server.original.py" "$CONTAINER:/app/server.py" || true
+    if [ "$ORIGIN_PRESENT" = 1 ]; then
+      docker cp "$TEMP/origin.original" "$CONTAINER:/data/muse-public-origin" || true
+    else
+      docker exec -u 0 "$CONTAINER" rm -f /data/muse-public-origin || true
+    fi
+    docker restart "$CONTAINER" >/dev/null || true
+  fi
+  exit "$code"
+}
+cleanup() { rm -rf -- "$TEMP"; }
+trap restore_on_error ERR
+trap cleanup EXIT
+
+docker cp "$CONTAINER:/app/server.py" "$TEMP/server.original.py"
+if docker exec "$CONTAINER" test -f /data/muse-public-origin; then
+  ORIGIN_PRESENT=1
+  docker cp "$CONTAINER:/data/muse-public-origin" "$TEMP/origin.original"
 fi
-if ! curl --fail --silent --show-error --max-time 8 "http://$NAS_IP:8765/health" >/dev/null; then
-  echo 'Music Profiles Bridge is not reachable on port 8765. No changes made.' >&2
-  exit 1
-fi
 
-# Keep existing /data (OAuth records and encrypted profile sessions) intact.
-mkdir -p "$STATE"
-TMP="$(mktemp -d /tmp/muse-music-fix.XXXXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
-RAW="https://raw.githubusercontent.com/dcazih/homelab/$SOURCE_REF/muse-music-connector"
-curl --fail --silent --show-error --location --retry 3 "$RAW/server.py" -o "$TMP/server.py"
-python3 -m py_compile "$TMP/server.py"
-grep -q "MUSE_CLIENT_ID = 'muse'" "$TMP/server.py" || {
-  echo 'Downloaded code lacks the built-in Muse OAuth client.' >&2
-  exit 1
-}
-cp -p "$SOURCE/muse-music-connector/server.py" "$STATE/server.py.backup.$(date +%Y%m%d%H%M%S)"
-install -m 0644 "$TMP/server.py" "$SOURCE/muse-music-connector/server.py"
+RAW="https://raw.githubusercontent.com/dcazih/homelab/$MUSE_REF/muse-music-connector/server.py"
+curl --fail --silent --show-error --location --retry 3 "$RAW" -o "$TEMP/server.py"
+python3 -m py_compile "$TEMP/server.py"
+grep -q "MUSE_CLIENT_ID = 'muse'" "$TEMP/server.py"
+grep -q "PUBLIC_ORIGIN_OVERRIDE = Path('/data/muse-public-origin')" "$TEMP/server.py"
 
-# Only add an override for the public music origin. Do not rewrite the
-# existing TrueNAS compose file or overwrite private credentials.
-cat > "$OVERRIDE" <<EOF
-services:
-  muse-music:
-    environment:
-      STAGE2_PUBLIC_URL: "$PUBLIC_URL"
-EOF
+# The existing container may carry an old OAuth issuer in its environment.
+# /data is a persistent volume and takes priority over the old environment.
+printf '%s\n' "$PUBLIC_URL" > "$TEMP/muse-public-origin"
+chmod 0644 "$TEMP/muse-public-origin" "$TEMP/server.py"
 
-echo 'Building and updating ONLY homelab-music muse-music...'
-docker compose -f "$COMPOSE" -f "$OVERRIDE" config -q
-docker compose -f "$COMPOSE" -f "$OVERRIDE" up -d --build --no-deps muse-music
+MODIFIED=1
+docker cp "$TEMP/muse-public-origin" "$CONTAINER:/data/muse-public-origin"
+docker cp "$TEMP/server.py" "$CONTAINER:/app/server.py"
+docker restart "$CONTAINER" >/dev/null
 
 LOCAL="http://$NAS_IP:8788"
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
+READY=0
+for n in 1 2 3 4 5 6 7 8 9 10; do
   if curl --fail --silent --show-error --max-time 3 "$LOCAL/health" >/dev/null 2>&1; then
+    READY=1
     break
   fi
   sleep 2
 done
-curl --fail --silent --show-error --max-time 5 "$LOCAL/health" >/dev/null
+if [ "$READY" != 1 ]; then
+  echo 'Updated Muse did not become healthy.' >&2
+  docker logs --tail 35 "$CONTAINER" >&2 || true
+  false
+fi
 
-# Validate OAuth discovery AND the pre-registered Meta callback, rather than
-# relying on a 401 or an apparently healthy container.
-curl --fail --silent --show-error --max-time 5 "$LOCAL/.well-known/oauth-authorization-server" | python3 -c '
-import json, sys
-metadata=json.load(sys.stdin)
-assert metadata["issuer"] == "https://homelab.hippocampus-polaris.ts.net:8443"
-assert metadata["authorization_endpoint"] == metadata["issuer"]+"/authorize"
-assert metadata["token_endpoint"] == metadata["issuer"]+"/token"
-assert "none" in metadata["token_endpoint_auth_methods_supported"]
-assert "S256" in metadata["code_challenge_methods_supported"]
-assert set(metadata["scopes_supported"]) == {"music:read","music:write"}
+# Check OAuth discovery, authorization page, and unauthorized MCP challenge.
+curl --fail --silent --show-error --max-time 6 \
+  "$LOCAL/.well-known/oauth-authorization-server" | python3 -c '
+import json,sys
+data=json.load(sys.stdin)
+assert data["issuer"]=="https://homelab.hippocampus-polaris.ts.net:8443"
+assert data["token_endpoint_auth_methods_supported"]==["none"]
+assert "S256" in data["code_challenge_methods_supported"]
+assert set(data["scopes_supported"])=={"music:read","music:write"}
 '
-AUTH_CODE="$(curl --silent --show-error --max-time 5 --get --output "$TMP/authorize.html" --write-out '%{http_code}' \
+CODE="$(curl --silent --show-error --max-time 6 --get \
+  --output "$TEMP/auth.html" --write-out '%{http_code}' \
   --data-urlencode 'client_id=muse' \
   --data-urlencode 'redirect_uri=https://agent.meta.ai/api/hatch/oauth/callback' \
   --data-urlencode 'response_type=code' \
   --data-urlencode 'code_challenge_method=S256' \
   --data-urlencode 'code_challenge=0123456789abcdefghijklmnopqrstuvwxyzABCDEFG' \
   --data-urlencode 'scope=music:read music:write' \
-  --data-urlencode 'state=muse-music-smoke' \
+  --data-urlencode 'state=connector-preflight' \
   "$LOCAL/authorize")"
-if [ "$AUTH_CODE" != '200' ] || ! grep -q 'Authorize Muse' "$TMP/authorize.html"; then
-  echo "Meta Muse OAuth authorization preflight failed (HTTP $AUTH_CODE)." >&2
-  echo 'Existing music database is preserved. Check docker compose logs muse-music.' >&2
-  exit 1
+if [ "$CODE" != 200 ] || ! grep -q 'Authorize Muse' "$TEMP/auth.html"; then
+  echo "Muse music authorization preflight failed (HTTP $CODE)." >&2
+  false
 fi
-
-# Muse may supply a generated public client ID instead of the built-in muse.
-# Both paths must be accepted only when Meta's fixed callback and PKCE match.
-AUTO_CLIENT_CODE="$(curl --silent --show-error --max-time 5 --get --output "$TMP/auto-client.html" --write-out '%{http_code}'   --data-urlencode 'client_id=muse-connect'   --data-urlencode 'redirect_uri=https://agent.meta.ai/api/hatch/oauth/callback'   --data-urlencode 'response_type=code'   --data-urlencode 'code_challenge_method=S256'   --data-urlencode 'code_challenge=0123456789abcdefghijklmnopqrstuvwxyzABCDEFG'   --data-urlencode 'scope=music:read music:write'   "$LOCAL/authorize")"
-if [ "$AUTO_CLIENT_CODE" != '200' ] || ! grep -q 'Authorize Muse' "$TMP/auto-client.html"; then
-  echo "Muse-generated client OAuth preflight failed (HTTP $AUTO_CLIENT_CODE)." >&2
-  exit 1
+CODE="$(curl --silent --show-error --max-time 6 --output /dev/null --write-out '%{http_code}' "$LOCAL/mcp")"
+if [ "$CODE" != 401 ]; then
+  echo "Muse MCP endpoint must challenge with 401, got HTTP $CODE." >&2
+  false
 fi
+MODIFIED=0
+echo 'Music OAuth and MCP preflight passed. Existing data and settings preserved.'
 
-MCP_CODE="$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' "$LOCAL/mcp" || true)"
-if [ "$MCP_CODE" != '401' ]; then
-  echo "MCP unauthenticated discovery should return 401; got $MCP_CODE" >&2
-  exit 1
-fi
-
-# Tailscale Funnel permits HTTPS port 8443. This coexists with the existing
-# port 443 NAS admin Funnel without remapping the admin endpoint.
-echo 'Music OAuth and PKCE preflight passed. Publishing music on HTTPS :8443.'
+# This is a separate Funnel listener on :8443, not the existing root-admin
+# listener on :443. Do not alter the NAS gateway or tailnet-only services.
 docker exec "$TAILSCALE_CONTAINER" tailscale funnel --bg --https=8443 "$LOCAL"
-
-echo 'Checking the publicly reachable Music OAuth metadata...'
-curl --fail --silent --show-error --max-time 12   "$PUBLIC_URL/.well-known/oauth-authorization-server" | python3 -c '
-import json, sys
-meta=json.load(sys.stdin)
-assert meta["issuer"] == "https://homelab.hippocampus-polaris.ts.net:8443"
-assert "music:read" in meta.get("scopes_supported",[])
-assert "music:write" in meta.get("scopes_supported",[])
-assert "nas:root" not in meta.get("scopes_supported",[])
-'
-
+echo 'Checking public music OAuth metadata...'
+PUBLIC_READY=0
+for n in 1 2 3 4 5; do
+  if curl --fail --silent --show-error --max-time 8 \
+       "$PUBLIC_URL/.well-known/oauth-authorization-server" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+assert d["issuer"]=="https://homelab.hippocampus-polaris.ts.net:8443"
+assert set(d.get("scopes_supported",[]))=={"music:read","music:write"}
+' >/dev/null 2>&1; then
+    PUBLIC_READY=1
+    break
+  fi
+  sleep 2
+done
 echo
-echo 'Muse Music MCP endpoint:'
-echo "$PUBLIC_URL/mcp"
-echo 'Muse OAuth client ID: muse'
-echo 'Muse callback: https://agent.meta.ai/api/hatch/oauth/callback'
-echo 'OAuth scopes: music:read music:write'
-echo 'Sign in on the authorization page with your enrolled Navidrome account.'
-echo 'The NAS root MCP gateway was not modified.'
+echo "Muse Music MCP address: $PUBLIC_URL/mcp"
+echo 'Muse client ID: muse'
+echo 'Client secret: none'
+echo 'Permissions: music:read music:write (NOT nas:root)'
+echo 'Authorize with your enrolled Navidrome username and password.'
+if [ "$PUBLIC_READY" = 1 ]; then
+  echo 'Public music OAuth metadata verified.'
+else
+  echo 'WARNING: public Funnel metadata could not be verified from this NAS.' >&2
+  echo "Verify $PUBLIC_URL/.well-known/oauth-authorization-server before retrying Muse." >&2
+fi
+echo 'Your NAS administrator gateway was not changed.'
