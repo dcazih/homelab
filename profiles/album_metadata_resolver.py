@@ -134,22 +134,27 @@ async def _verified_requested_artists(artist, mb_get):
     seen, accepted = set(), []
     for query in queries:
         result = await mb_get('artist', {'query': query, 'limit': 20})
+        inspected = 0
         for item in result.get('artists') or []:
             aid = str(item.get('id') or '')
             if not MBID.fullmatch(aid) or aid in seen:
                 continue
+            # The plain artist search may include hundreds of merely similar
+            # names. Only the alias-specific query may inspect non-exact names.
+            exact_name = fold(item.get('name')) == expected
+            if not exact_name and not query.startswith('alias:'):
+                continue
+            inspected += 1
+            if inspected > 5:
+                break
             seen.add(aid)
-            # Exact name is a safe fast path. For alias names, verify the
-            # alias against the full artist record, not search index ranking.
-            if fold(item.get('name')) != expected:
-                details = await mb_get('artist/' + aid, {'inc': 'aliases+artist-rels'})
+            details = await mb_get('artist/' + aid, {'inc': 'aliases+artist-rels'})
+            if not exact_name:
                 actual = {fold(details.get('name'))}
                 actual.update(fold(a.get('name')) for a in details.get('aliases') or []
                               if isinstance(a, dict))
                 if expected not in actual:
                     continue
-            else:
-                details = await mb_get('artist/' + aid, {'inc': 'aliases+artist-rels'})
             if str(details.get('id') or '') != aid:
                 continue
             accepted.append(details)
@@ -165,7 +170,7 @@ async def _group_relation_match(group, source_artists, mb_get, credited_cache, b
     target_ids = {str(p['artist'].get('id') or '')
                   for p in credit_parts(group.get('artist-credit'))}
     target_ids = {x for x in target_ids if MBID.fullmatch(x)}
-    if not target_ids:
+    if not target_ids or not source_artists:
         return ''
     for source in source_artists:
         if _is_member_of(source, target_ids):
@@ -276,20 +281,37 @@ async def resolve_album(artist, title, mb_get, release_group_mbid=None):
         if direct_credit_match(group, artist):
             eligible.append(group)
             match_reason[gid]='artist_credit'
-        elif await _credit_has_verified_alias(group, artist, mb_get, alias_cache, alias_budget):
-            eligible.append(group)
-            match_reason[gid]='artist_alias'
     if not eligible:
-        # When no directly credited match exists, verify artist/group
-        # relationships using actual MusicBrainz entity and relation IDs.
+        # Search the requested artist identity ONCE. Matching artist MBIDs
+        # automatically handles aliases and alternate release credits. Only
+        # true MB artist relations may promote a member or another persona.
         sources = await _verified_requested_artists(artist, mb_get)
+        source_ids = {str(x.get('id') or '') for x in sources}
         credited_cache = {}
         budget = [_MAX_GROUP_RELATION_CHECKS]
         for group in seen.values():
-            relation = await _group_relation_match(group,sources,mb_get,credited_cache,budget)
-            if relation:
+            target_ids={str(p['artist'].get('id') or '')
+                        for p in credit_parts(group.get('artist-credit'))}
+            gid=group['id']
+            if source_ids & target_ids:
                 eligible.append(group)
-                match_reason[group['id']] = relation
+                match_reason[gid]='verified_artist_id'
+                continue
+            if sources:
+                relation=await _group_relation_match(
+                    group,sources,mb_get,credited_cache,budget)
+                if relation:
+                    eligible.append(group)
+                    match_reason[gid]=relation
+        # Only a tiny set of groups with no MusicBrainz artist identity can
+        # warrant extra credited-artist alias verification; large result sets
+        # otherwise trigger an unbounded fanout (e.g. artist "MIKE").
+        if not eligible and not sources and len(seen) <= 3:
+            for group in seen.values():
+                if await _credit_has_verified_alias(
+                        group,artist,mb_get,alias_cache,alias_budget):
+                    eligible.append(group)
+                    match_reason[group['id']]='artist_alias'
 
     if len(eligible) == 1:
         group=eligible[0]
