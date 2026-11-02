@@ -1,4 +1,7 @@
+import os
+import sys
 import unittest
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'profiles')))
 from album_metadata_resolver import fold, resolve_album
 
 G1='11111111-1111-1111-1111-111111111111'
