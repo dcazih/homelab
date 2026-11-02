@@ -162,4 +162,29 @@ class AlbumResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'],'ambiguous')
         self.assertEqual(len(result['candidates']),2)
 
+
+    async def test_unclassified_release_group_can_be_preflight_checked(self):
+        album=group(G1,'Strobelight','Boldy James',typ=None)
+        async def mb_get(path,params):return {'release-groups':[album]}
+        result=await resolve_album('Boldy James','Strobelight',mb_get)
+        self.assertEqual(result['status'],'matched')
+
+    async def test_title_extension_with_double_slash(self):
+        album=group(G1,'POMPEII // UTILITY','MIKE')
+        async def mb_get(path,params):return {'release-groups':[album]}
+        result=await resolve_album('MIKE','Pompeii',mb_get)
+        self.assertEqual(result['status'],'matched')
+        self.assertEqual(result['match_type'],
+                         'artist_credit+canonical_title_extension')
+
+    async def test_does_not_guess_arbitrary_album_title_prefix(self):
+        album=group(G1,'The Blueprint 2','Jay-Z')
+        async def mb_get(path,params):
+            if path=='release-group':return {'release-groups':[album]}
+            if path=='release':return {'releases':[]}
+            raise AssertionError(path)
+        result=await resolve_album('Jay-Z','The Blueprint',mb_get)
+        self.assertEqual(result['status'],'not_found')
+
+
 if __name__=='__main__':unittest.main()
