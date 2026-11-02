@@ -1262,25 +1262,44 @@ async def manual_request(body:ManualRequestIn,user=Depends(require_user)):
     if body.release_group_mbid and not editions.MBID.fullmatch(body.release_group_mbid):err('Enter a valid MusicBrainz release group ID',400)
     # Album acquisitions operate on a release group; they cannot pin a specific edition.
     if body.album.strip():err('Specific album editions cannot yet be guaranteed. Request the album without an edition or use Cassette to choose a release.',400)
+    import album_metadata_resolver as album_resolver
     try:
-        if body.release_group_mbid:
-            group=await editions.mb_get('release-group/'+body.release_group_mbid,{'inc':'artist-credits'})
-            candidates=editions.mb_original_release_candidates([group],artist,title)
-        else:
-            safe=lambda value:value.replace('"','').strip()
-            data=await editions.mb_get('release-group',{'query':f'releasegroup:"{safe(title)}" AND artist:"{safe(artist)}"','limit':25})
-            candidates=editions.mb_original_release_candidates(data.get('release-groups',[]),artist,title)
-        if len(candidates)!=1:err('Could not identify one exact album. Check the artist and title, or provide its MusicBrainz release group ID.',400)
-        group=candidates[0]
+        match=await album_resolver.resolve_album(
+            artist,title,editions.mb_get,body.release_group_mbid)
+        if match['status']!='matched':
+            options=[]
+            for item in match['candidates'][:5]:
+                options.append(f"{album_resolver.credited_as(item) or 'Unknown artist'} — {item.get('title') or ''} (release group {item['id']})")
+            message=match['reason'] or 'Album identification requires review'
+            if options:
+                message+='; possible matches: '+'; '.join(options)
+            err(message,409 if match['status']=='ambiguous' else 400)
+        group=match['group']
+        canonical_title=str(group.get('title') or title).strip()
+        canonical_artist=album_resolver.credited_as(group) or artist
+        # The album request is keyed to the release-group ID, never to an
+        # unverified search result or a guessed individual edition.
         data=await editions.mb_get('release',{'release-group':group['id'],'limit':100})
-        releases=[r for r in data.get('releases',[]) if isinstance(r,dict) and r.get('status')=='Official' and normalize(r.get('title'))==normalize(title) and editions.MBID.fullmatch(str(r.get('id','')))]
-        releases.sort(key=editions.mb_release_rank)
-        if not releases:err('No matching official album release was found.',400)
-        details=await editions.mb_get('release/'+releases[0]['id'],{'inc':'recordings'})
-        count=sum(int(m.get('track-count') or len(m.get('tracks') or [])) for m in details.get('media',[]) if isinstance(m,dict))
+        releases=[r for r in data.get('releases',[])
+                  if isinstance(r,dict) and r.get('status')=='Official'
+                  and editions.MBID.fullmatch(str(r.get('id','')))]
+        releases.sort(key=lambda r:(
+            album_resolver.fold(r.get('title'))!=album_resolver.fold(canonical_title),
+            editions.mb_release_rank(r)))
+        if not releases:err('No official edition is currently recorded for this release group.',400)
+        count=0
+        # An incomplete MusicBrainz edition must not block a complete one.
+        for release in releases[:4]:
+            details=await editions.mb_get('release/'+release['id'],{'inc':'recordings'})
+            count=sum(int(m.get('track-count') or len(m.get('tracks') or []))
+                      for m in details.get('media',[]) if isinstance(m,dict))
+            if 1<=count<=1000:break
         if not 1<=count<=1000:err('Could not verify the album track count.',400)
-    except (httpx.HTTPError,ValueError,TypeError,KeyError):err('Album metadata is unavailable. Try again later.',502)
-    return await albums.request_album(albums.AlbumRequest(username=user['username'],artist=artist,album=title,release_group_mbid=group['id'],expected_tracks=count))
+    except (httpx.HTTPError,ValueError,TypeError,KeyError):
+        err('Album metadata is unavailable. Try again later.',502)
+    return await albums.request_album(albums.AlbumRequest(
+        username=user['username'],artist=canonical_artist,album=canonical_title,
+        release_group_mbid=group['id'],expected_tracks=count))
 
 class RecordingChoice(BaseModel):
     recording_mbid:str=Field(min_length=36,max_length=36)
