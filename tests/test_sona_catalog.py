@@ -85,4 +85,17 @@ class CatalogTests(unittest.IsolatedAsyncioTestCase):
         wrong={'id':'wrong','title':'Test Song','artist':'Test Artist','album':'Test Album','musicBrainzId':GROUP}
         self.assertIsNone(catalog.match_song(META['tracks'][0],[wrong],'Test Artist','Test Album'))
 
+    async def test_artist_discography_follows_browse_pagination(self):
+        async def mb(endpoint, params):
+            offset = params.get('offset', 0)
+            return {'release-group-count': 103, 'release-groups': [
+                {'id': str(i), 'title': 'Release ' + str(i), 'primary-type': 'Album'}
+                for i in range(offset, min(offset + 100, 103))]}
+        async def metadata(user, path, params=None):
+            return {'songs': []} if path.endswith('top-songs') else {'name': 'Test Artist'}
+        with patch.object(catalog.editions, 'mb_get', side_effect=mb) as browse, patch.object(catalog, 'metadata', side_effect=metadata):
+            data = (await self.client.get('/v1/sona/artists/' + GROUP)).json()
+            self.assertEqual(len(data['albums']), 103)
+            self.assertEqual(browse.call_args_list[1].args[1]['offset'], 100)
+
 if __name__ == '__main__': unittest.main()

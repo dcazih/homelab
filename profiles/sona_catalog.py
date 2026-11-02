@@ -146,7 +146,20 @@ async def artist(artist_id: str, user=Depends(core.require_user)):
         editions.mb_get('release-group', {'artist': artist_id, 'inc': 'artist-credits', 'limit': 100}),
         metadata(user, '/api/v1/artists/' + artist_id),
         metadata(user, '/api/v1/artists/' + artist_id + '/top-songs', {'count': 16}))
-    rows = data.get('release-groups') or []
+    rows = list(data.get('release-groups') or [])
+    total = int(data.get('release-group-count') or len(rows))
+    offset = len(rows)
+    # MusicBrainz browse is paginated; a local artist must expose the complete
+    # discography rather than silently truncating it to the first 100 releases.
+    while offset < total:
+        page = await editions.mb_get('release-group', {
+            'artist': artist_id, 'inc': 'artist-credits', 'limit': 100, 'offset': offset})
+        batch = page.get('release-groups') or []
+        if not batch:
+            break
+        rows.extend(batch)
+        offset += len(batch)
+    rows = list({row['id']: row for row in rows if row.get('id')}.values())
     songs = [{'id': row['recording_mbid'], 'kind': 'song', 'title': row['title'], 'artist': row['artist_name'],
               'album': row.get('release_name') or '', 'albumId': row.get('release_group_mbid') or '',
               'cover': artwork(row.get('release_group_mbid'))}
