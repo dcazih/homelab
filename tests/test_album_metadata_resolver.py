@@ -38,7 +38,9 @@ class AlbumResolverTests(unittest.IsolatedAsyncioTestCase):
         good=group(G1,'Pinata','Freddie Gibbs',A1)
         async def mb_get(path,params):
             if path=='release-group':return {'release-groups':[good]}
-            if path=='artist/'+A1:return {'name':'Freddie Gibbs','aliases':[{'name':'Freddie'}]}
+            if path=='artist':
+                return {'artists':[{'id':A1,'name':'Freddie Gibbs'}]} if 'alias:' in params['query'] else {'artists':[]}
+            if path=='artist/'+A1:return {'id':A1,'name':'Freddie Gibbs','aliases':[{'name':'Freddie'}],'relations':[]}
             raise AssertionError(path)
         result=await resolve_album('Freddie','Piñata',mb_get)
         self.assertEqual(result['status'],'matched')
