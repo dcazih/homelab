@@ -91,30 +91,137 @@ async def _credit_has_verified_alias(group, artist, mb_get, alias_cache, budget)
     return False
 
 
-def _result(status, group=None, candidates=None, reason=''):
-    return {'status': status, 'group': group, 'candidates': candidates or [], 'reason': reason}
+
+# Relation type IDs are stable MusicBrainz schema identifiers, not fuzzy labels.
+_MEMBER_OF_BAND = '5be4c609-9afa-4ea0-910b-12ffb71e3821'
+_IS_PERSON = 'dd9886f2-1dfe-4270-97db-283f6839a666'
+_MAX_ARTIST_CANDIDATES = 4
+_MAX_GROUP_RELATION_CHECKS = 9
+
+
+def _identity_entities(artist_detail):
+    """Same-person identities, proved only by MusicBrainz performance-name links."""
+    own_id = str(artist_detail.get('id') or '')
+    identities = {own_id} if MBID.fullmatch(own_id) else set()
+    for rel in artist_detail.get('relations') or []:
+        if rel.get('type-id') != _IS_PERSON:
+            continue
+        other = rel.get('artist') or {}
+        other_id = str(other.get('id') or '')
+        if MBID.fullmatch(other_id):
+            identities.add(other_id)
+    return identities
+
+
+def _is_member_of(artist_detail, group_artist_ids):
+    """A member-of-band link, rather than generic collaboration, proves membership."""
+    for rel in artist_detail.get('relations') or []:
+        if rel.get('type-id') != _MEMBER_OF_BAND or rel.get('direction') != 'forward':
+            continue
+        other = rel.get('artist') or {}
+        if other.get('id') in group_artist_ids:
+            return True
+    return False
+
+
+async def _verified_requested_artists(artist, mb_get):
+    """Do not trust a high-ranked search hit without verifying its identity."""
+    expected = fold(artist)
+    queries = [
+        f'artist:"{_escape_query(artist)}"',
+        f'alias:"{_escape_query(artist)}"',
+    ]
+    seen, accepted = set(), []
+    for query in queries:
+        result = await mb_get('artist', {'query': query, 'limit': 20})
+        for item in result.get('artists') or []:
+            aid = str(item.get('id') or '')
+            if not MBID.fullmatch(aid) or aid in seen:
+                continue
+            seen.add(aid)
+            # Exact name is a safe fast path. For alias names, verify the
+            # alias against the full artist record, not search index ranking.
+            if fold(item.get('name')) != expected:
+                details = await mb_get('artist/' + aid, {'inc': 'aliases+artist-rels'})
+                actual = {fold(details.get('name'))}
+                actual.update(fold(a.get('name')) for a in details.get('aliases') or []
+                              if isinstance(a, dict))
+                if expected not in actual:
+                    continue
+            else:
+                details = await mb_get('artist/' + aid, {'inc': 'aliases+artist-rels'})
+            if str(details.get('id') or '') != aid:
+                continue
+            accepted.append(details)
+            if len(accepted) >= _MAX_ARTIST_CANDIDATES:
+                return accepted
+        if accepted:
+            break
+    return accepted
+
+
+async def _group_relation_match(group, source_artists, mb_get, credited_cache, budget):
+    """Prove group membership or shared performance identity via MB artist MBIDs."""
+    target_ids = {str(p['artist'].get('id') or '')
+                  for p in credit_parts(group.get('artist-credit'))}
+    target_ids = {x for x in target_ids if MBID.fullmatch(x)}
+    if not target_ids:
+        return ''
+    for source in source_artists:
+        if _is_member_of(source, target_ids):
+            return 'verified_group_membership'
+    source_identity = set()
+    for source in source_artists:
+        source_identity.update(_identity_entities(source))
+    for target_id in target_ids:
+        if target_id in source_identity:
+            return 'performance_name'
+        if target_id not in credited_cache:
+            if budget[0] <= 0:
+                continue
+            budget[0] -= 1
+            credited_cache[target_id] = await mb_get('artist/' + target_id,
+                                                     {'inc': 'aliases+artist-rels'})
+        credited = credited_cache[target_id]
+        # A second persona linked to the *same* underlying person is safe.
+        if source_identity & _identity_entities(credited):
+            return 'performance_name'
+        # Sometimes only the group side documents a member relation. Reverse
+        # direction is meaningful when checking a group artist's relations.
+        if any(rel.get('type-id') == _MEMBER_OF_BAND
+               and rel.get('direction') == 'backward'
+               and str((rel.get('artist') or {}).get('id') or '') in {
+                   str(src.get('id')) for src in source_artists}
+               for rel in credited.get('relations') or []):
+            return 'verified_group_membership'
+    return ''
+
+def _result(status, group=None, candidates=None, reason='', match_type=''):
+    return {'status': status, 'group': group, 'candidates': candidates or [],
+            'reason': reason, 'match_type': match_type}
 
 
 async def resolve_album(artist, title, mb_get, release_group_mbid=None):
-    """Resolve confidently or return actionable candidates without submitting.
+    """Resolve a verified original identity; otherwise return review candidates.
 
-    A supplied MBID pins the identity but is still checked against requested
-    title and verified artist name/aliases. Multiple eligible groups always
-    require selection, never a best-score guess.
+    This is metadata-only. Never creates DroppedNeedle requests, even if the
+    source API returns a timeout or looks like a plausible fuzzy match.
     """
     if not fold(artist) or not fold(title):
         return _result('not_found', reason='Missing artist or album')
 
     alias_cache = {}
     alias_budget = [_MAX_ALIAS_LOOKUPS]
-    seen = {}
+    seen, title_from_release = {}, set()
 
-    async def accept(groups):
+    async def accept(groups, allow_canonical_difference=False):
         for item in groups:
             if not isinstance(item, dict):
                 continue
             gid = str(item.get('id') or '')
-            if MBID.fullmatch(gid) and gid not in seen and title_match(item, title):
+            if not MBID.fullmatch(gid):
+                continue
+            if title_match(item, title) or (allow_canonical_difference and gid in title_from_release):
                 seen[gid] = item
 
     if release_group_mbid:
@@ -126,52 +233,72 @@ async def resolve_album(artist, title, mb_get, release_group_mbid=None):
             return _result('not_found', reason='MBID points to a different album title')
     else:
         safe_title, safe_artist = _escape_query(title), _escape_query(artist)
-        # First the narrow query, then title-only (catches artist punctuation,
-        # alias indexing, and collaborative credits), then release title aliases.
         queries = [f'releasegroup:"{safe_title}" AND artist:"{safe_artist}"',
-                   f'releasegroup:"{safe_title}"', f'alias:"{safe_title}"']
-        for query in queries:
+                   f'releasegroup:"{safe_title}"',
+                   f'alias:"{safe_title}"',
+                   f'release:"{safe_title}"']
+        # First search tightly; always run title-only if needed to discover
+        # alternate group credits and distinct release-group collisions.
+        for n, query in enumerate(queries):
             data = await mb_get('release-group', {'query': query, 'limit': _TITLE_QUERY_LIMIT})
             await accept(data.get('release-groups') or [])
             direct = [g for g in seen.values() if group_type_allowed(g)
                       and direct_credit_match(g, artist)]
-            # Search both strict and title-only to detect distinct exact matches.
-            if len(direct) == 1 and query != queries[0]:
+            if len(direct) == 1 and n >= 1:
                 break
+
+        # As a last resort, a release's exact title may differ from the
+        # canonical release-group title. Its real release-group MBID is proof.
         if not seen:
             data = await mb_get('release', {'query': f'release:"{safe_title}"', 'limit': 40})
-            ids = []
+            group_ids = []
             for release in data.get('releases') or []:
                 if fold(release.get('title')) != fold(title):
                     continue
                 group = release.get('release-group') or {}
                 gid = str(group.get('id') or '') if isinstance(group, dict) else ''
-                if MBID.fullmatch(gid) and gid not in ids:
-                    ids.append(gid)
-                if len(ids) >= 8:
+                if MBID.fullmatch(gid) and gid not in group_ids:
+                    group_ids.append(gid)
+                if len(group_ids) >= 8:
                     break
-            for gid in ids:
+            for gid in group_ids:
+                title_from_release.add(gid)
                 item = await mb_get('release-group/' + gid, {'inc': 'artist-credits'})
-                # Release titles can be aliases of the canonical group title.
-                if MBID.fullmatch(str(item.get('id') or '')):
-                    seen[gid] = item
+                await accept([item], allow_canonical_difference=True)
 
+    seen = {gid:g for gid,g in seen.items() if group_type_allowed(g)}
+    if not seen:
+        return _result('not_found', reason='No usable release-group metadata found')
     eligible = []
+    match_reason = {}
     for group in seen.values():
-        if not group_type_allowed(group):
-            continue
+        gid=group['id']
         if direct_credit_match(group, artist):
             eligible.append(group)
+            match_reason[gid]='artist_credit'
         elif await _credit_has_verified_alias(group, artist, mb_get, alias_cache, alias_budget):
             eligible.append(group)
+            match_reason[gid]='artist_alias'
+    if not eligible:
+        # When no directly credited match exists, verify artist/group
+        # relationships using actual MusicBrainz entity and relation IDs.
+        sources = await _verified_requested_artists(artist, mb_get)
+        credited_cache = {}
+        budget = [_MAX_GROUP_RELATION_CHECKS]
+        for group in seen.values():
+            relation = await _group_relation_match(group,sources,mb_get,credited_cache,budget)
+            if relation:
+                eligible.append(group)
+                match_reason[group['id']] = relation
 
     if len(eligible) == 1:
-        return _result('matched', group=eligible[0])
+        group=eligible[0]
+        mtype=match_reason[group['id']]
+        if group['id'] in title_from_release:
+            mtype += '+release_title'
+        return _result('matched',group=group,match_type=mtype)
     if len(eligible) > 1:
-        return _result('ambiguous', candidates=eligible,
-                       reason='Multiple distinct release groups match the artist and album')
-    # Offer exact-title candidates for explicit selection; don't silently
-    # attribute a collaboration or a persona's catalog to another artist.
-    return _result('not_found', candidates=list(seen.values())[:8],
-                   reason=('Matching album title found, but its artist credit/type differs'
-                           if seen else 'No matching album metadata found'))
+        return _result('ambiguous',candidates=eligible,
+                       reason='Multiple MusicBrainz release groups match verified credits/relationships')
+    return _result('not_found',candidates=list(seen.values())[:8],
+                   reason='Exact album title found, but artist identity is unverified')
