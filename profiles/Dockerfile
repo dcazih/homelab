@@ -4,7 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY assets ./assets
-COPY app.py dn_accounts.py edition_matching.py index.html album_request_bridge_v6.py metadata_resolver_v1.py metadata_recovery_v1.py peer_scheduler.py peer_scheduler_api.py shared_acquisition.py ./
+COPY app.py dn_accounts.py edition_matching.py index.html album_request_bridge_v6.py metadata_resolver_v1.py metadata_recovery_v1.py peer_scheduler.py peer_scheduler_api.py shared_acquisition.py sona_catalog.py ./
 RUN useradd -r -u 10001 service && mkdir /data && chown service:service /data
 USER service
 EXPOSE 8765
