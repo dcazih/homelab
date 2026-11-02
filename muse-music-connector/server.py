@@ -29,6 +29,10 @@ DB = os.getenv('STAGE2_DB', '/data/stage2.sqlite3')
 FERNET_KEY = os.getenv('STAGE2_ENCRYPTION_KEY', '')
 DEV = os.getenv('STAGE2_DEV_MODE', '0') == '1'
 SCOPE = 'music:read music:write'
+# Meta Muse's fixed public OAuth callback. Muse does not use dynamic
+# client registration; it sends a pre-issued client ID and PKCE verifier.
+MUSE_CLIENT_ID = 'muse'
+MUSE_REDIRECT_URI = 'https://agent.meta.ai/api/hatch/oauth/callback'
 if not FERNET_KEY:
     raise RuntimeError('STAGE2_ENCRYPTION_KEY required; run setup_stage2.py')
 if not (BASE.startswith('https://') or (DEV and BASE.startswith('http://127.0.0.1:'))):
@@ -60,6 +64,15 @@ def init():
         CREATE TABLE IF NOT EXISTS auth_codes (digest TEXT PRIMARY KEY, client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL, challenge TEXT NOT NULL, bridge_secret BLOB NOT NULL, username TEXT NOT NULL, resource TEXT NOT NULL, scope TEXT NOT NULL, expires INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS grants (access_hash TEXT PRIMARY KEY, refresh_hash TEXT UNIQUE NOT NULL, client_id TEXT NOT NULL, username TEXT NOT NULL, bridge_secret BLOB NOT NULL, scope TEXT NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
         ''')
+        # Every startup repairs the built-in Meta Muse public client, including
+        # existing deployments with an already-created persistent SQLite DB.
+        # No user sessions, Bridge credentials, or other clients are removed.
+        c.execute('''
+            INSERT INTO clients (id, name, redirect_uris, created)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, redirect_uris=excluded.redirect_uris
+        ''', (MUSE_CLIENT_ID, 'Meta Muse', json.dumps([MUSE_REDIRECT_URI]), now()))
 init()
 
 @app.middleware('http')
@@ -358,13 +371,20 @@ async def execute_tool(name,args,profile):
         return output
     if name=='music_get_request':
         if not re.fullmatch('[A-Za-z0-9_-]{1,80}',args['request_id']):raise HTTPException(422,'Invalid request ID')
-        return await bridge_get('/v1/proposals/'+args['request_id'],profile)
+        # The Bridge exposes GET /v1/proposals, not GET /v1/proposals/{id}.
+        # Only search the authenticated user's own proposals.
+        proposals=await bridge_get('/v1/proposals',profile)
+        found=next((item for item in proposals.get('proposals',[])
+                    if str(item.get('id'))==args['request_id']),None)
+        if found is None: raise HTTPException(404,'Request not found for this profile')
+        return found
 
 @app.post('/mcp')
 async def mcp(request:Request):
     grant=auth_grant(request)
     origin=request.headers.get('origin')
-    if origin and origin != BASE:raise HTTPException(403,'Untrusted MCP Origin')
+    if origin and origin not in (BASE, 'https://agent.meta.ai'):
+        raise HTTPException(403,'Untrusted MCP Origin')
     try:body=await request.json()
     except ValueError:raise HTTPException(400,'Expected JSON-RPC body')
     if not isinstance(body,dict) or body.get('jsonrpc')!='2.0':raise HTTPException(400,'JSON-RPC 2.0 required')
@@ -390,4 +410,7 @@ async def mcp(request:Request):
     return JSONResponse({'jsonrpc':'2.0','id':req_id,'result':result},headers={'MCP-Protocol-Version':'2025-06-18'})
 
 @app.get('/mcp')
-async def mcp_get():return Response(status_code=405)
+async def mcp_get(request:Request):
+    # Muse discovers OAuth via the 401 Bearer challenge on both GET and POST.
+    auth_grant(request)
+    return Response(status_code=405)

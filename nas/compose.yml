@@ -102,6 +102,9 @@ services:
     environment:
       BRIDGE_URL: http://music-profiles:8765
       STAGE2_DB: /data/stage2.sqlite3
+      # Separate publicly reachable OAuth/MCP origin for Muse. Preserve
+      # homelab:443 for the independent NAS admin gateway.
+      STAGE2_PUBLIC_URL: https://homelab.hippocampus-polaris.ts.net:8443
     volumes:
       - /mnt/Pool/music-server/state/muse:/data
     ports:
