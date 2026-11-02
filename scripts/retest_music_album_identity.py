@@ -154,6 +154,9 @@ async def main():
                            canonical_artist=credited_as(group),
                            canonical_album=group['title'])
                 edition=await official_edition_check(mb,group['id'])
+                if group.get('primary-type') is None and edition['tracks'] < 2:
+                    edition={'ok':False,'tracks':edition['tracks'],
+                             'reason':'unclassified one-track release is not an album'}
                 row.update(edition)
                 row['metadata_preflight_pass']=edition['ok']
             else:
