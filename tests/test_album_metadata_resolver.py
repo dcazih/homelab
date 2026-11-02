@@ -187,4 +187,21 @@ class AlbumResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'],'not_found')
 
 
+
+    async def test_verified_descriptive_subtitle(self):
+        album=group(G1,"I Don’t Like Shit, I Don’t Go Outside: An Album by Earl Sweatshirt",'Earl Sweatshirt')
+        async def mb_get(path,params):return {'release-groups':[album]}
+        result=await resolve_album('Earl Sweatshirt',
+                                  "I Don't Like Shit, I Don't Go Outside",mb_get)
+        self.assertEqual(result['status'],'matched')
+
+    async def test_colon_split_finds_original_with_spacing_variation(self):
+        album=group(G1,'Supreme Dump Legend : Soul Cook Saga','Tha God Fahim')
+        async def mb_get(path,params):
+            if path!='release-group':return {'releases':[]}
+            return {'release-groups':[album]} if params['query']=='releasegroup:"Soul Cook Saga"' else {'release-groups':[]}
+        result=await resolve_album('Tha God Fahim','Supreme Dump Legend: Soul Cook Saga',mb_get)
+        self.assertEqual(result['status'],'matched')
+
+
 if __name__=='__main__':unittest.main()
