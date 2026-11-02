@@ -142,14 +142,16 @@ async def songs(q: str = Query(min_length=2, max_length=160), user=Depends(core.
 @core.app.get('/v1/sona/artists/{artist_id}')
 async def artist(artist_id: str, user=Depends(core.require_user)):
     artist_id = valid_id(artist_id)
-    data = await editions.mb_get('release-group', {'artist': artist_id, 'inc': 'artist-credits', 'limit': 100})
+    data, artist_info, popular = await asyncio.gather(
+        editions.mb_get('release-group', {'artist': artist_id, 'inc': 'artist-credits', 'limit': 100}),
+        metadata(user, '/api/v1/artists/' + artist_id),
+        metadata(user, '/api/v1/artists/' + artist_id + '/top-songs', {'count': 16}))
     rows = data.get('release-groups') or []
-    popular = await metadata(user, '/api/v1/artists/' + artist_id + '/top-songs', {'count': 16})
     songs = [{'id': row['recording_mbid'], 'kind': 'song', 'title': row['title'], 'artist': row['artist_name'],
               'album': row.get('release_name') or '', 'albumId': row.get('release_group_mbid') or '',
               'cover': artwork(row.get('release_group_mbid'))}
              for row in popular.get('songs', []) if editions.MBID.fullmatch(str(row.get('recording_mbid') or ''))]
-    return {'albums': [album_item(row) for row in rows], 'songs': songs, 'title': credit(rows[0]) if rows else 'Artist'}
+    return {'albums': [album_item(row) for row in rows], 'songs': songs, 'title': artist_info.get('name') or 'Artist'}
 
 
 async def album_metadata(user, album_id):
