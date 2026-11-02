@@ -184,6 +184,18 @@ if [ "$READY" != 1 ]; then
   false
 fi
 
+# Validate the outbound Bridge connection INSIDE the new container. The host
+# being able to reach port 8765 is not enough if the Docker network differs.
+if ! docker exec "$CONTAINER" python -c '
+import os, httpx
+bridge=os.environ["BRIDGE_URL"].rstrip("/")
+response=httpx.get(bridge+"/health",timeout=8)
+response.raise_for_status()
+' ; then
+  echo 'Muse container cannot reach Music Profiles Bridge. Check Docker networking.' >&2
+  false
+fi
+
 # Check OAuth discovery, authorization page, and unauthorized MCP challenge.
 curl --fail --silent --show-error --max-time 6 \
   "$LOCAL/.well-known/oauth-authorization-server" | python3 -c '
