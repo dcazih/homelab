@@ -146,6 +146,22 @@ fi
 MODIFIED=0
 echo 'Music OAuth and MCP preflight passed. Existing data and settings preserved.'
 
+# Also update the local source tree if present, so the corrected connector
+# survives a future Compose rebuild. The running container does not depend on
+# the source tree being present. Keep a timestamped backup in that folder.
+HOST_SOURCE='/mnt/Pool/music-server/source/muse-music-connector/server.py'
+if [ -f "$HOST_SOURCE" ]; then
+  HOST_BACKUP="$HOST_SOURCE.before-muse-fix.$(date +%Y%m%d%H%M%S)"
+  if cp -p "$HOST_SOURCE" "$HOST_BACKUP" &&
+     install -m 0644 "$TEMP/server.py" "$HOST_SOURCE"; then
+    echo "Persistent source patched; backup: $HOST_BACKUP"
+  else
+    echo 'WARNING: running container is updated, but host source persistence failed.' >&2
+  fi
+else
+  echo 'WARNING: no host source file found; a future container recreation could revert this patch.' >&2
+fi
+
 # This is a separate Funnel listener on :8443, not the existing root-admin
 # listener on :443. Do not alter the NAS gateway or tailnet-only services.
 docker exec "$TAILSCALE_CONTAINER" tailscale funnel --bg --https=8443 "$LOCAL"
