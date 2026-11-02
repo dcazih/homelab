@@ -23,7 +23,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-BASE = os.getenv('STAGE2_PUBLIC_URL', 'http://127.0.0.1:8788').rstrip('/')
+# Existing TrueNAS containers may have a persistent STAGE2_PUBLIC_URL environment
+# value from an older Compose deployment. Allow a protected /data override so a
+# code-only update can change this connector's public OAuth issuer without
+# recreating the container, its credentials, networks, or storage.
+PUBLIC_ORIGIN_OVERRIDE = Path('/data/muse-public-origin')
+BASE = (PUBLIC_ORIGIN_OVERRIDE.read_text(encoding='utf-8').strip()
+        if PUBLIC_ORIGIN_OVERRIDE.is_file() else
+        os.getenv('STAGE2_PUBLIC_URL', 'http://127.0.0.1:8788')).rstrip('/')
 BRIDGE = os.getenv('BRIDGE_URL', 'http://127.0.0.1:8765').rstrip('/')
 DB = os.getenv('STAGE2_DB', '/data/stage2.sqlite3')
 FERNET_KEY = os.getenv('STAGE2_ENCRYPTION_KEY', '')
