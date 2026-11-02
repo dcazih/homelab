@@ -53,7 +53,7 @@ grep -q "MUSE_CLIENT_ID = 'muse'" "$TMP/server.py" || {
   echo 'Downloaded code lacks the built-in Muse OAuth client.' >&2
   exit 1
 }
-cp -p "$SOURCE/muse-music-connector/server.py" "$TMP/server.py.before"
+cp -p "$SOURCE/muse-music-connector/server.py" "$STATE/server.py.backup.$(date +%Y%m%d%H%M%S)"
 install -m 0644 "$TMP/server.py" "$SOURCE/muse-music-connector/server.py"
 
 # Only add an override for the public music origin. Do not rewrite the
@@ -105,6 +105,14 @@ if [ "$AUTH_CODE" != '200' ] || ! grep -q 'Authorize Muse' "$TMP/authorize.html"
   exit 1
 fi
 
+# Muse may supply a generated public client ID instead of the built-in muse.
+# Both paths must be accepted only when Meta's fixed callback and PKCE match.
+AUTO_CLIENT_CODE="$(curl --silent --show-error --max-time 5 --get --output "$TMP/auto-client.html" --write-out '%{http_code}'   --data-urlencode 'client_id=muse-connect'   --data-urlencode 'redirect_uri=https://agent.meta.ai/api/hatch/oauth/callback'   --data-urlencode 'response_type=code'   --data-urlencode 'code_challenge_method=S256'   --data-urlencode 'code_challenge=0123456789abcdefghijklmnopqrstuvwxyzABCDEFG'   --data-urlencode 'scope=music:read music:write'   "$LOCAL/authorize")"
+if [ "$AUTO_CLIENT_CODE" != '200' ] || ! grep -q 'Authorize Muse' "$TMP/auto-client.html"; then
+  echo "Muse-generated client OAuth preflight failed (HTTP $AUTO_CLIENT_CODE)." >&2
+  exit 1
+fi
+
 MCP_CODE="$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' "$LOCAL/mcp" || true)"
 if [ "$MCP_CODE" != '401' ]; then
   echo "MCP unauthenticated discovery should return 401; got $MCP_CODE" >&2
@@ -115,6 +123,16 @@ fi
 # port 443 NAS admin Funnel without remapping the admin endpoint.
 echo 'Music OAuth and PKCE preflight passed. Publishing music on HTTPS :8443.'
 docker exec "$TAILSCALE_CONTAINER" tailscale funnel --bg --https=8443 "$LOCAL"
+
+echo 'Checking the publicly reachable Music OAuth metadata...'
+curl --fail --silent --show-error --max-time 12   "$PUBLIC_URL/.well-known/oauth-authorization-server" | python3 -c '
+import json, sys
+meta=json.load(sys.stdin)
+assert meta["issuer"] == "https://homelab.hippocampus-polaris.ts.net:8443"
+assert "music:read" in meta.get("scopes_supported",[])
+assert "music:write" in meta.get("scopes_supported",[])
+assert "nas:root" not in meta.get("scopes_supported",[])
+'
 
 echo
 echo 'Muse Music MCP endpoint:'
