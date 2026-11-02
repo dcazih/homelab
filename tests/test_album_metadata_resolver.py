@@ -61,7 +61,8 @@ class AlbumResolverTests(unittest.IsolatedAsyncioTestCase):
         wrong=group(G1,'Madvillainy','Madvillain')
         async def mb_get(path,params):
             if path=='release-group':return {'release-groups':[wrong]}
-            if path=='artist/'+A1:return {'name':'Madvillain', 'aliases': []}
+            if path=='artist':return {'artists': []}
+            if path=='artist/'+A1:return {'id':A1, 'name':'Madvillain', 'aliases': [], 'relations': []}
             raise AssertionError(path)
         result=await resolve_album('MF DOOM','Madvillainy',mb_get)
         self.assertEqual(result['status'],'not_found')
@@ -84,5 +85,79 @@ class AlbumResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'],'matched')
         self.assertEqual(result['group']['title'],'Canonical Name')
 
+
+
+    async def test_verified_member_group_madvillain(self):
+        group_artist_id='44444444-4444-4444-4444-444444444444'
+        artist_id='55555555-5555-5555-5555-555555555555'
+        album=group(G1,'Madvillainy','Madvillain',group_artist_id)
+        async def mb_get(path,params):
+            if path=='release-group':return {'release-groups':[album]}
+            if path=='artist':return {'artists':[{'id':artist_id,'name':'MF DOOM'}]}
+            if path=='artist/'+artist_id:
+                return {'id':artist_id,'name':'MF DOOM','relations':[{
+                    'type-id':'5be4c609-9afa-4ea0-910b-12ffb71e3821',
+                    'direction':'forward','artist':{'id':group_artist_id,'name':'Madvillain'}}]}
+            if path=='artist/'+group_artist_id:
+                return {'id':group_artist_id,'name':'Madvillain','relations':[]}
+            raise AssertionError(path)
+        result=await resolve_album('MF DOOM','Madvillainy',mb_get)
+        self.assertEqual(result['status'],'matched')
+        self.assertEqual(result['match_type'],'verified_group_membership')
+
+    async def test_personas_share_verified_legal_person(self):
+        artist_id='55555555-5555-5555-5555-555555555555'
+        legal_id='66666666-6666-6666-6666-666666666666'
+        persona_id='77777777-7777-7777-7777-777777777777'
+        album=group(G1,'Vaudeville Villain','Viktor Vaughn',persona_id)
+        persona_rel=lambda:{'type-id':'dd9886f2-1dfe-4270-97db-283f6839a666',
+                            'direction':'backward','artist':{'id':legal_id,'name':'Daniel Dumile'}}
+        async def mb_get(path,params):
+            if path=='release-group':return {'release-groups':[album]}
+            if path=='artist':return {'artists':[{'id':artist_id,'name':'MF DOOM'}]}
+            if path=='artist/'+artist_id:
+                return {'id':artist_id,'name':'MF DOOM','relations':[persona_rel()]}
+            if path=='artist/'+persona_id:
+                return {'id':persona_id,'name':'Viktor Vaughn','relations':[persona_rel()]}
+            raise AssertionError(path)
+        result=await resolve_album('MF DOOM','Vaudeville Villain',mb_get)
+        self.assertEqual(result['status'],'matched')
+        self.assertEqual(result['match_type'],'performance_name')
+
+    async def test_unrelated_collaborator_not_promoted_to_album_artist(self):
+        artist_id='55555555-5555-5555-5555-555555555555'
+        group_artist_id='66666666-6666-6666-6666-666666666666'
+        album=group(G1,'Unrelated','Different Artist',group_artist_id)
+        async def mb_get(path,params):
+            if path=='release-group':return {'release-groups':[album]}
+            if path=='artist':return {'artists':[{'id':artist_id,'name':'MF DOOM'}]}
+            if path=='artist/'+artist_id:
+                return {'id':artist_id,'name':'MF DOOM','relations':[{
+                    'type-id':'75c09861-6857-4ec0-9729-84eefde7fc86',
+                    'direction':'forward','artist':{'id':group_artist_id}}]}
+            if path=='artist/'+group_artist_id:
+                return {'id':group_artist_id,'name':'Different Artist','relations':[]}
+            raise AssertionError(path)
+        result=await resolve_album('MF DOOM','Unrelated',mb_get)
+        self.assertEqual(result['status'],'not_found')
+
+    async def test_never_guesses_between_two_member_groups(self):
+        artist_id='55555555-5555-5555-5555-555555555555'
+        group_artist_a='66666666-6666-6666-6666-666666666666'
+        group_artist_b='77777777-7777-7777-7777-777777777777'
+        albums=[group(G1,'Joint Album','Group A',group_artist_a),
+                group(G2,'Joint Album','Group B',group_artist_b)]
+        async def mb_get(path,params):
+            if path=='release-group':return {'release-groups':albums}
+            if path=='artist':return {'artists':[{'id':artist_id,'name':'Collaborator'}]}
+            if path=='artist/'+artist_id:
+                return {'id':artist_id,'name':'Collaborator','relations':[
+                    {'type-id':'5be4c609-9afa-4ea0-910b-12ffb71e3821',
+                     'direction':'forward','artist':{'id':a}}
+                     for a in (group_artist_a,group_artist_b)]}
+            return {'id':path.split('/')[-1],'relations':[]}
+        result=await resolve_album('Collaborator','Joint Album',mb_get)
+        self.assertEqual(result['status'],'ambiguous')
+        self.assertEqual(len(result['candidates']),2)
 
 if __name__=='__main__':unittest.main()
