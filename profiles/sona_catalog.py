@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 from typing import Literal
 import httpx
-from fastapi import Depends, Query
+from fastapi import Depends, Query, Request
 from pydantic import BaseModel, Field
 import app as core
 import edition_matching as editions
@@ -90,17 +90,23 @@ def exact_artist(data, query):
 
 
 @core.app.get('/v1/sona/search')
-async def search(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user), intent: Literal["auto", "artist"] = "auto"):
+async def search(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user), intent: Literal["auto", "artist"] = "auto", request: Request = None):
     if not core.linked_token(core.connection, core.cipher, user['id']):
         core.err('Connect your request account in the Requests tab.', 409)
     from sona_search import search as ranked_search
-    return await ranked_search(user, q, metadata, album_metadata, intent)
+    return await ranked_search(user, q, metadata, album_metadata, intent, request=request)
 
 
 @core.app.get('/v1/sona/songs')
 async def songs(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user)):
     result = await search(q, user)
     return {'songs': result['songs'], 'intent': result['intent']}
+
+
+@core.app.get('/v1/sona/verify')
+async def verify_search_item(kind: Literal['song','album'], id: str, album_id: str = '', user=Depends(core.require_user)):
+    from sona_search import verify
+    return await verify(user, kind, valid_id(id), valid_id(album_id) if album_id else '', album_metadata)
 
 
 @core.app.get('/v1/sona/artists/{artist_id}')

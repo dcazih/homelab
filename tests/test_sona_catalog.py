@@ -133,4 +133,43 @@ class SearchRelevanceTests(unittest.IsolatedAsyncioTestCase):
             await search.search(USER,'Billie Jean',None,None)
             self.assertEqual(run.await_count,1)
 
+class FastSearchTests(unittest.IsolatedAsyncioTestCase):
+    def test_artist_prefix_and_title_intent(self):
+        from sona_search import hint_intent
+        hints=[{'title':'One','artist':'Kendrick Lamar','album':'A'},{'title':'Two','artist':'Kendrick Lamar','album':'B'}]
+        self.assertEqual(hint_intent('Kendrick',hints)[:2],('artist','Kendrick Lamar'))
+        self.assertEqual(hint_intent('All Caps',[{'title':'All Caps','artist':'Madvillain','album':'Madvillainy'}])[:2],('song','All Caps'))
+        self.assertEqual(hint_intent('Jay-Z Reasonable Doubt',[{'title':'Something','artist':'Jay-Z','album':'Reasonable Doubt (Fireworks Supermix)'}])[:2],('album','reasonable doubt'))
+
+    async def test_candidate_retrieval_never_waits_for_request_metadata(self):
+        import sona_search as search
+        with patch.object(search,'relevance_hints',AsyncMock(return_value=[{'title':'Test Song','artist':'Test Artist','album':'Test Album'}])), patch.object(search.mb,'mb_get',AsyncMock(return_value={'recordings':[{'id':TRACK,'title':'Test Song','artist-credit':[{'artist':{'id':GROUP,'name':'Test Artist'}}],'releases':[{'title':'Test Album','status':'Official','release-group':{'id':GROUP,'primary-type':'Album'}}]}]})):
+            verify=AsyncMock(side_effect=AssertionError('verification must not run during retrieval'))
+            data=await search._run(USER,'Test Song',None,verify)
+            self.assertEqual(len(data['songs']),1)
+            self.assertFalse(data['songs'][0]['requestable'])
+            self.assertTrue(data['songs'][0]['verificationPending'])
+            verify.assert_not_called()
+
+    async def test_separate_verification_rejects_unknown_recording(self):
+        from sona_search import verify
+        data=await verify(USER,'song',GROUP,GROUP,AsyncMock(return_value=META))
+        self.assertFalse(data['requestable'])
+        data=await verify(USER,'song',TRACK,GROUP,AsyncMock(return_value=META))
+        self.assertTrue(data['requestable'])
+
+    async def test_disconnected_queries_stop_planning(self):
+        import asyncio
+        import sona_search as search
+        search._cache.clear();search._tasks.clear()
+        started=asyncio.Event();cancelled=asyncio.Event()
+        async def run(*args):
+            started.set()
+            try:await asyncio.Event().wait()
+            finally:cancelled.set()
+        request=type('Request',(),{'is_disconnected':AsyncMock(return_value=True)})()
+        with patch.object(search,'_run',run):
+            with self.assertRaises(asyncio.CancelledError):await search.search(USER,'obsolete query',None,None,request=request)
+            await asyncio.wait_for(cancelled.wait(),1)
+
 if __name__ == '__main__': unittest.main()
