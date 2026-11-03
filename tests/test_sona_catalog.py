@@ -158,6 +158,14 @@ class FastSearchTests(unittest.IsolatedAsyncioTestCase):
         data=await verify(USER,'song',TRACK,GROUP,AsyncMock(return_value=META))
         self.assertTrue(data['requestable'])
 
+    async def test_credited_album_pair_skips_full_query_artist_expansion(self):
+        import sona_search as search
+        groups={'release-groups':[{'id':GROUP,'title':'POMPEII // UTILITY','primary-type':'Album','artist-credit':[{'artist':{'id':TRACK,'name':'MIKE'}}]}]}
+        with patch.object(search,'relevance_hints',AsyncMock(return_value=[])), patch.object(search,'artist_candidates',AsyncMock(side_effect=AssertionError('unnecessary artist lookup'))), patch.object(search.mb,'mb_get',AsyncMock(return_value=groups)) as mb:
+            data=await search._run(USER,'MIKE Pompeii',None,None)
+            self.assertEqual(data['albums'][0]['id'],GROUP)
+            self.assertEqual(mb.await_count,1)
+
     async def test_disconnected_queries_stop_planning(self):
         import asyncio
         import sona_search as search

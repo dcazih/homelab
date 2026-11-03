@@ -214,6 +214,19 @@ async def _run(user, query, metadata, album_metadata, intent_override='auto'):
     intent, target, hint = hint_intent(query,hints)
     if intent_override=='artist':intent='artist';target=query
     artists=[];albums=[];songs=[];identity=None
+    prefetched_groups=None
+    words=safe(query).split()
+    group_query=' OR '.join(f'releasegroup:"{safe(" ".join(words[i:]))}"' for i in range(min(3,len(words))))
+    pairs=[f'(releasegroup:"{safe(" ".join(words[i:]))}" AND artist:"{safe(" ".join(words[:i]))}")' for i in range(1,min(4,len(words)))]
+    if pairs:group_query+=' OR '+' OR '.join(pairs)
+    if intent=='auto' and len(words)>1:
+        # A credited artist + album pair can establish intent in one lookup.
+        # Do not first expand an entire compound query as an artist name.
+        prefetched_groups=await mb.mb_get('release-group',{'query':group_query,'limit':8})
+        for row in prefetched_groups.get('release-groups',[]):
+            prefix,pair_score=paired_title(query,row.get('title'))
+            if pair_score and any(affinity(prefix,c.get('name'))==100 for c in credits(row)):
+                intent='album';target=row.get('title','');break
     if intent in ('artist','auto'):
         found=await artist_candidates(target, allow_fuzzy=(intent!='auto'))
         if found:
@@ -229,15 +242,15 @@ async def _run(user, query, metadata, album_metadata, intent_override='auto'):
             group_query=' OR '.join(f'releasegroup:"{safe(" ".join(words[i:]))}"' for i in range(min(3,len(words))))
             pairs=[f'(releasegroup:"{safe(" ".join(words[i:]))}" AND artist:"{safe(" ".join(words[:i]))}")' for i in range(1,min(4,len(words)))]
             if pairs:group_query+=' OR '+' OR '.join(pairs)
-            group_data,recording_data=await asyncio.gather(
-                mb.mb_get('release-group',{'query':group_query,'limit':8}),
-                mb.mb_get('recording',{'query':f'recording:"{safe(query)}"','limit':8}))
+            async def get_groups():
+                return prefetched_groups if prefetched_groups is not None else await mb.mb_get('release-group',{'query':group_query,'limit':8})
+            group_data,recording_data=await asyncio.gather(get_groups(),mb.mb_get('recording',{'query':f'recording:"{safe(query)}"','limit':8}))
         elif intent=='album':
             group_query=f'releasegroup:"{safe(target)}"'
             if hint:
                 artist=re.split(r'\s*[&,]\s*',hint['artist'])[0]
                 group_query+=f' AND artist:"{safe(artist)}"'
-            group_data=await mb.mb_get('release-group',{'query':group_query,'limit':8})
+            group_data=prefetched_groups if prefetched_groups is not None else await mb.mb_get('release-group',{'query':group_query,'limit':8})
             recording_data={}
         else:
             group_data={}
@@ -252,7 +265,7 @@ async def _run(user, query, metadata, album_metadata, intent_override='auto'):
             prefix,pair=paired_title(query,row.get('title'))
             score=affinity(query,row.get('title'))
             if prefix:
-                direct=any(artist_affinity(prefix,name)>=91 for name in credit_names(row))
+                direct=any(affinity(prefix,name)>=87 for name in credit_names(row))
                 if not direct:
                     if prefix not in checked_prefixes:
                         checked_prefixes[prefix]=await artist_candidates(prefix)
