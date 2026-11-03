@@ -90,53 +90,17 @@ def exact_artist(data, query):
 
 
 @core.app.get('/v1/sona/search')
-async def search(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user)):
-    data = await base_search(user, q)
-    artist = exact_artist(data, q)
-    album_rows = [album_item(row) for row in data.get('albums', []) if editions.MBID.fullmatch(str(row.get('musicbrainz_id', '')))]
-    if artist:
-        releases = await metadata(user, '/api/v1/artists/' + artist['musicbrainz_id'] + '/releases', {'limit': 50})
-        own = [album_item({**row, 'artist': artist['title']}) for kind in ('albums','eps','singles') for row in releases.get(kind, [])
-               if editions.MBID.fullmatch(str(row.get('id', '')))]
-        seen = {row['id'] for row in own}
-        album_rows = own + [row for row in album_rows if row['id'] not in seen]
-    return {'albums': album_rows,
-            'artists': [{'id': row['musicbrainz_id'], 'kind': 'artist', 'title': row['title'], 'artist': row['title']}
-                        for row in data.get('artists', []) if editions.MBID.fullmatch(str(row.get('musicbrainz_id', '')))],
-            'status': data.get('bucket_status') or {}}
+async def search(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user), intent: Literal["auto", "artist"] = "auto"):
+    if not core.linked_token(core.connection, core.cipher, user['id']):
+        core.err('Connect your request account in the Requests tab.', 409)
+    from sona_search import search as ranked_search
+    return await ranked_search(user, q, metadata, album_metadata, intent)
 
 
 @core.app.get('/v1/sona/songs')
 async def songs(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user)):
-    # Recording search is independent of album search, so a slow provider never
-    # holds back local songs or the album/artist results. Uses the durable shared
-    # MusicBrainz cache, request coalescing and global provider rate limit.
-    if not core.linked_token(core.connection, core.cipher, user['id']):
-        core.err('Connect your request account in the Requests tab.', 409)
-    artists = await base_search(user, q)
-    artist = exact_artist(artists, q)
-    if artist:
-        popular = await metadata(user, '/api/v1/artists/' + artist['musicbrainz_id'] + '/top-songs', {'count': 40})
-        top = [{'id': row['recording_mbid'], 'kind': 'song', 'title': row['title'], 'artist': row['artist_name'],
-                'album': row.get('release_name') or '', 'albumId': row.get('release_group_mbid') or '',
-                'cover': artwork(row.get('release_group_mbid'))}
-               for row in popular.get('songs', []) if editions.MBID.fullmatch(str(row.get('recording_mbid') or ''))]
-        if top: return {'songs': top}
-    terms = core.normalize(q).split()
-    escaped = 'arid:' + artist['musicbrainz_id'] if artist else ' AND '.join('(recording:"' + word + '" OR artist:"' + word + '")' for word in terms)
-    data = await editions.mb_get('recording', {'query': escaped, 'limit': 40})
-    rows = []
-    for row in data.get('recordings', []):
-        if not editions.MBID.fullmatch(str(row.get('id', ''))): continue
-        releases = [r for r in row.get('releases', []) if r.get('status') == 'Official']
-        release = next((r for r in releases if (r.get('release-group') or {}).get('primary-type') == 'Album'), next(iter(releases), {}))
-        group = (release.get('release-group') or {}).get('id', '')
-        artist = credit(row)
-        if not artist or not row.get('title'): continue
-        rows.append({'id': row['id'], 'kind': 'song', 'title': row['title'], 'artist': artist,
-                     'album': release.get('title', ''), 'albumId': group,
-                     'duration': (row.get('length') or 0) / 1000, 'cover': artwork(group)})
-    return {'songs': rows}
+    result = await search(q, user)
+    return {'songs': result['songs'], 'intent': result['intent']}
 
 
 @core.app.get('/v1/sona/artists/{artist_id}')

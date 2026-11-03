@@ -98,4 +98,39 @@ class CatalogTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(data['albums']), 103)
             self.assertEqual(browse.call_args_list[1].args[1]['offset'], 100)
 
+class SearchRelevanceTests(unittest.IsolatedAsyncioTestCase):
+    def test_conservative_spelling_prefix_and_word_overlap(self):
+        from sona_search import affinity, paired_title
+        self.assertEqual(affinity('miceal jackson','Michael Jackson'),87)
+        self.assertEqual(affinity('Michael Jack','Michael Jackson'),91)
+        self.assertEqual(affinity('MIKE','Mike Oldfield'),0)
+        self.assertEqual(affinity('Jackson','Janet Jackson'),0)
+        self.assertEqual(paired_title('MIKE Pompeii','POMPEII // UTILITY'),('mike',102))
+        self.assertEqual(paired_title('MIKE Pompeii','Shake It Off / Pompeii'),('',0))
+
+    def test_deduplicates_editions_without_merging_different_artist_ids(self):
+        from sona_search import unique
+        rows=[{'id':GROUP,'title':'Same','artist':'Same'}, {'id':TRACK,'title':'Same','artist':'Same'}]
+        self.assertEqual(len(unique(rows,'album')),1)
+        self.assertEqual(len(unique(rows,'artist')),2)
+
+    async def test_alias_requires_real_artist_details(self):
+        import sona_search as search
+        async def metadata(path,params):
+            if path=='artist':return {'artists':[{'id':GROUP,'name':'Ye','score':100}]}
+            return {'id':GROUP,'name':'Ye','aliases':[{'name':'Kanye West'}]}
+        with patch.object(search.mb,'mb_get',side_effect=metadata):
+            result=await search.artist_candidates('Kanye West')
+            self.assertEqual(result[0]['id'],GROUP)
+            self.assertIn('Kanye West',result[0]['_names'])
+
+    async def test_same_query_endpoints_coalesce_and_warm_cache(self):
+        import sona_search as search
+        search._cache.clear();search._tasks.clear()
+        run=AsyncMock(return_value={'artists':[],'albums':[],'songs':[],'intent':'song'})
+        with patch.object(search,'_run',run):
+            await __import__('asyncio').gather(search.search(USER,'Billie Jean',None,None),search.search(USER,'Billie Jean',None,None))
+            await search.search(USER,'Billie Jean',None,None)
+            self.assertEqual(run.await_count,1)
+
 if __name__ == '__main__': unittest.main()
