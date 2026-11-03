@@ -166,6 +166,21 @@ class FastSearchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data['albums'][0]['id'],GROUP)
             self.assertEqual(mb.await_count,1)
 
+    async def test_explicit_song_filter_keeps_title_search(self):
+        import sona_search as search
+        with patch.object(search,'relevance_hints',AsyncMock(return_value=[{'title':'Thriller','artist':'Michael Jackson','album':'Thriller'}])), patch.object(search.mb,'mb_get',AsyncMock(return_value={'recordings':[]})) as mb:
+            await search._run(USER,'Thriller',None,None,'song')
+            self.assertEqual(mb.call_args.args[0],'recording')
+
+    async def test_artist_query_album_filter_loads_only_small_discography(self):
+        import sona_search as search
+        artist={'id':GROUP,'name':'Artist','_names':['Artist']}
+        with patch.object(search,'relevance_hints',AsyncMock(return_value=[{'title':'One','artist':'Artist','album':'First'},{'title':'Two','artist':'Artist','album':'Second'}])),patch.object(search,'artist_candidates',AsyncMock(return_value=[artist])),patch.object(search.mb,'mb_get',AsyncMock(return_value={'release-groups':[]})) as mb:
+            data=await search._run(USER,'Artist',None,None,'album')
+            self.assertEqual(data['intent'],'album')
+            self.assertEqual(mb.call_args.args[1]['artist'],GROUP)
+            self.assertEqual(mb.call_args.args[1]['limit'],12)
+
     async def test_disconnected_queries_stop_planning(self):
         import asyncio
         import sona_search as search

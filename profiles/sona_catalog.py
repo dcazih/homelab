@@ -90,7 +90,7 @@ def exact_artist(data, query):
 
 
 @core.app.get('/v1/sona/search')
-async def search(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user), intent: Literal["auto", "artist"] = "auto", request: Request = None):
+async def search(q: str = Query(min_length=2, max_length=160), user=Depends(core.require_user), intent: Literal["auto", "artist", "album", "song"] = "auto", request: Request = None):
     if not core.linked_token(core.connection, core.cipher, user['id']):
         core.err('Connect your request account in the Requests tab.', 409)
     from sona_search import search as ranked_search

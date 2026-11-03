@@ -213,6 +213,7 @@ async def _run(user, query, metadata, album_metadata, intent_override='auto'):
     hints = [] if intent_override=='artist' else await relevance_hints(query)
     intent, target, hint = hint_intent(query,hints)
     if intent_override=='artist':intent='artist';target=query
+    elif intent_override in ('album','song') and intent!='artist':intent=intent_override
     artists=[];albums=[];songs=[];identity=None
     prefetched_groups=None
     words=safe(query).split()
@@ -234,6 +235,14 @@ async def _run(user, query, metadata, album_metadata, intent_override='auto'):
             artists=[{'id':row['id'],'kind':'artist','title':row['name'],'artist':row['name'],'aliases':row['_names']}]
             identity={'id':row['id'],'name':row['name'],'aliases':row['_names']}
             intent='artist'
+            if intent_override=='album':
+                own=await mb.mb_get('release-group',{'artist':row['id'],'type':'album','inc':'artist-credits','limit':12})
+                albums=[group_item(g,100) for g in own.get('release-groups',[]) if valid(g.get('id')) and any(c.get('id')==row['id'] for c in credits(g)) and not set(g.get('secondary-types') or []).intersection({'Compilation','Live','Remix','DJ-mix','Soundtrack'})]
+                albums=unique(albums,'album',3);intent='album'
+            elif intent_override=='song':
+                popular=await metadata(user,'/api/v1/artists/'+row['id']+'/top-songs',{'count':3})
+                songs=[{'id':r['recording_mbid'],'kind':'song','title':r.get('title',''),'artist':r.get('artist_name') or row['name'],'album':r.get('release_name') or '', 'albumId':r.get('release_group_mbid') or '', 'cover':'https://coverartarchive.org/release-group/'+str(r.get('release_group_mbid'))+'/front-500','requestable':False} for r in popular.get('songs',[]) if valid(r.get('recording_mbid')) and valid(r.get('release_group_mbid'))]
+                songs=unique(songs,'song',3);intent='song'
     if not artists:
         words=safe(query).split()
         if intent=='auto':
