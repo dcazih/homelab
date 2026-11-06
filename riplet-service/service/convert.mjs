@@ -85,8 +85,10 @@ export async function makeMedia(job, limits) {
     const h = Number(job.quality);
     const ext = job.format;
     const preferredAudio = ext === 'mp4' ? 'm4a' : 'webm';
-    args.push('-f', `bv*[height<=${h}][ext=${ext}]+ba[ext=${preferredAudio}]/b[height<=${h}][ext=${ext}]/bv*[height<=${h}]+ba/b[height<=${h}]`,
-      '--merge-output-format', ext, '--recode-video', ext);
+    const compatibleMp4 = ext === 'mp4'
+      ? `bv*[height<=${h}][ext=mp4][vcodec^=avc1][protocol=https]+ba[ext=m4a]` : '';
+    args.push('-f', `${compatibleMp4 ? `${compatibleMp4}/` : ''}bv*[height<=${h}][ext=${ext}]+ba[ext=${preferredAudio}]/b[height<=${h}][ext=${ext}]/bv*[height<=${h}]+ba/b[height<=${h}]`,
+      '--merge-output-format', ext);
   }
   args.push(job.url);
 
