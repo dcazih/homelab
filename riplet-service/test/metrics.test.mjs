@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createMetrics } from '../service/metrics.mjs';
-import { validateOptions } from '../service/validation.mjs';
+import { validateOptions, validateYoutubeUrl } from '../service/validation.mjs';
 
 test('metrics survive reopening and distinguish conversion from transfer', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'riplet-metrics-test-'));
@@ -24,6 +24,20 @@ test('metrics survive reopening and distinguish conversion from transfer', () =>
     assert.equal(rows.download_completed.delivered, 1000);
     metrics.close();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('YouTube URLs cannot redirect the downloader to supplied hosts or ports', () => {
+  const id = 'MtZpcG30n6s';
+  for (const url of [
+    `http://www.youtube.com/watch?v=${id}`,
+    `https://www.youtube.com.evil.test/watch?v=${id}`,
+    `https://127.0.0.1/watch?v=${id}`,
+    `https://www.youtube.com:8443/watch?v=${id}`,
+    `https://user@www.youtube.com/watch?v=${id}`,
+    `https://www.youtube.com/redirect?q=http://127.0.0.1/&v=${id}`,
+  ]) assert.throws(() => validateYoutubeUrl(url));
+  assert.deepEqual(validateYoutubeUrl(`https://www.youtube.com/watch?v=${id}&next=http://127.0.0.1/`),
+    { id, url: `https://www.youtube.com/watch?v=${id}` });
 });
 
 test('free and supporter quality gates match displayed choices', () => {

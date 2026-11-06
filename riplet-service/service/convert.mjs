@@ -8,7 +8,7 @@ const METADATA_TEMPLATE = '{"id":%(id)j,"title":%(title)j,"duration":%(duration)
 function processArgs() {
   // Node 22+ and yt-dlp[default] (includes yt-dlp-ejs challenge scripts) are installed in the image.
   // We intentionally do not use --remote-components ejs:npm: that mode needs Deno/Bun, not Node.
-  return ['--ignore-config', '--no-playlist', '--no-cache-dir', '--js-runtimes', 'node',
+  return ['--ignore-config', '--no-playlist', '--no-cache-dir', '--use-extractors', 'youtube', '--js-runtimes', 'node',
     '--socket-timeout', '20', '--retries', '2', '--fragment-retries', '2'];
 }
 

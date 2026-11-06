@@ -64,6 +64,13 @@ async function deleteJob(job) {
   await removeDir(job);
 }
 
+async function removeAbandonedJobs() {
+  const dir = process.env.JOB_TEMP_DIR || os.tmpdir();
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  await Promise.all(entries.filter(entry => entry.name.startsWith('youtube-converter-'))
+    .map(entry => fs.rm(path.join(dir, entry.name), { recursive: true, force: true }).catch(() => {})));
+}
+
 async function runJob(job) {
   activeCount++;
   activeByIp.set(job.ip, (activeByIp.get(job.ip) || 0) + 1);
@@ -185,6 +192,7 @@ async function serve(req, res) {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, name: 'youtube-converter-api' });
   if (url.pathname === '/api/analytics/pageview' && req.method === 'POST') {
+    if (supportLimit(`pageview:${clientIp(req)}`, 120, 3_600_000)) return json(res, 429, { error: 'Too many pageviews.' });
     let body;
     try { body = await readBody(req); } catch { return json(res, 400, { error: 'Invalid pageview.' }); }
     let referrer = 'Direct';
@@ -228,8 +236,9 @@ async function serve(req, res) {
 
   if (url.pathname === '/api/jobs' && req.method === 'POST') {
     const ip = clientIp(req);
+    if (supportLimit(`job-attempt:${ip}`, 60, 3_600_000)) return json(res, 429, { error: 'Too many requests.' });
     const denied = canCreate(ip);
-    if (denied) { metrics.record('rate_limited',{reason:denied.includes('Hourly')?'hourly':'capacity'}); return json(res, 429, { error: denied }, { 'Retry-After': '15' }); }
+    if (denied) { if (!supportLimit(`limit-metric:${ip}`, 12, 3_600_000)) metrics.record('rate_limited',{reason:denied.includes('Hourly')?'hourly':'capacity'}); return json(res, 429, { error: denied }, { 'Retry-After': '15' }); }
     let options;
     const entitlement = await support.status(req.headers['x-riplet-key']);
     const tier = entitlement.active ? 'supporter' : 'free';
@@ -326,9 +335,9 @@ const metricsPruner = setInterval(() => metrics.prune(), 3_600_000);
 metricsPruner.unref();
 
 if (process.env.NODE_ENV !== 'test-import') {
-  server.listen(config.port, config.host, () => {
+  void removeAbandonedJobs().then(() => server.listen(config.port, config.host, () => {
     console.log(`Converter API ready at http://${config.host}:${config.port}`);
-  });
+  }));
 }
 
 export { server, config, jobs, metrics };
