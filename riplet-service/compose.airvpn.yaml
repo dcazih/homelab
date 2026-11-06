@@ -1,0 +1,91 @@
+# Riplet OpenVPN UDP AirVPN, no router forwarding.
+# Mount your private AirVPN Unified OpenVPN configuration as ./riplet.ovpn
+name: riplet-vpn
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    restart: unless-stopped
+    cap_add:
+    - NET_ADMIN
+    devices:
+    - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: custom
+      VPN_TYPE: openvpn
+      OPENVPN_CUSTOM_CONFIG: /gluetun/custom.conf
+      VPN_UP_COMMAND: /sbin/ip link set dev tun0 mtu 1320
+      FIREWALL_VPN_INPUT_PORTS: ${AIRVPN_PORT:?Set AIRVPN_PORT}
+    volumes:
+    - ./riplet.ovpn:/gluetun/custom.conf:ro
+  youtube-converter:
+    build: ../backend
+    restart: unless-stopped
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      PORT: '8080'
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://riplet.cc}
+      TRUST_PROXY: 'true'
+      MAX_ACTIVE_JOBS: '1'
+      MAX_ACTIVE_PER_IP: '1'
+      REQUESTS_PER_IP_PER_HOUR: '8'
+      MAX_READY_JOBS: '2'
+      MAX_DURATION_SECONDS: '14400'
+      CONVERT_TIMEOUT_SECONDS: '43200'
+      JOB_TEMP_DIR: /jobs
+      METRICS_DB_PATH: /metrics/metrics.sqlite
+      RIPLET_ADMIN_TOKEN: ${RIPLET_ADMIN_TOKEN:?Set private admin token}
+      SUPPORTER_DATA_DIR: /supporter
+      KOFI_VERIFICATION_TOKEN: ${KOFI_VERIFICATION_TOKEN:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SUPPORT_FROM_EMAIL: ${SUPPORT_FROM_EMAIL:-}
+      MAX_FILE_BYTES: '268435456'
+      MAX_TEMP_BYTES: '600000000'
+      READY_TTL_SECONDS: '300'
+    read_only: true
+    volumes:
+    - ../data/jobs:/jobs
+    - ../data/supporter:/supporter
+    - ../data/metrics:/metrics
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,size=1024m,mode=1777
+    security_opt:
+    - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1536m
+    cpus: 2
+  caddy:
+    image: ghcr.io/caddybuilds/caddy-cloudflare:2
+    restart: unless-stopped
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      youtube-converter:
+        condition: service_started
+    environment:
+      AIRVPN_PORT: ${AIRVPN_PORT:?Set AIRVPN_PORT}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN}
+    volumes:
+    - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    - caddy_data:/data
+    - caddy_config:/config
+    security_opt:
+    - no-new-privileges:true
+  ddns:
+    image: favonia/cloudflare-ddns:1
+    restart: unless-stopped
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN}
+      DOMAINS: api.riplet.cc
+      PROXIED: 'false'
+      IP6_PROVIDER: none
+volumes:
+  caddy_data: null
+  caddy_config: null
