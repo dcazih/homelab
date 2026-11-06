@@ -1,0 +1,6 @@
+/favicon.ico
+  Content-Type: image/x-icon
+  Cache-Control: public, max-age=3600, must-revalidate
+/icon-192.png
+  Content-Type: image/png
+  Cache-Control: public, max-age=3600, must-revalidate

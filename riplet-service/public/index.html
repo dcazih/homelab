@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f7fa" id="theme-color">
+  <meta name="description" content="Riplet helps you convert supported media links into MP3, MP4 and more with a beautifully simple interface.">
+  <title>Riplet • YouTube to MP3 Converter (Ad-Free)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/x-icon" href="./favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+  <link rel="stylesheet" href="./styles.css">
+  <script>(function(){try{const saved=localStorage.getItem('riplet-theme');const dark=saved==='dark'||(saved!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=dark?'dark':'light';document.querySelector('meta[name="theme-color"]').setAttribute('content',dark?'#202020':'#f7f7fa')}catch(e){}})();</script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#top" aria-label="Riplet homepage">
+<span class="brand-icon" aria-hidden="true"><img src="./riplet-app-icon.png?v=42" width="40" height="40" alt=""></span>
+        <span class="brand-text">riplet<span class="brand-dot">.</span></span>
+      </a>
+      <nav class="top-links" aria-label="Main navigation">
+        <a class="nav-link" href="#how-it-works">How it works</a>
+        <a class="nav-link" href="#faq">FAQ</a>
+        <button class="support-nav" id="support-nav" type="button" aria-haspopup="dialog" aria-controls="support-sheet"><img class="coffee-icon coffee-icon-nav" src="./coffee.png" alt="" aria-hidden="true"> Support us</button>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" title="Toggle color theme"><svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z"/></svg></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero content-width" aria-labelledby="page-title">
+      <h1 id="page-title">Free YouTube to <span class="purple-text" id="format-heading">MP3</span> Converter</h1>
+
+      <div class="converter-card" id="converter-panel">
+        <form id="converter-form" novalidate>
+          <label class="control-heading" for="media-url">Enter YouTube Video or Shorts URL</label>
+          <div class="url-field">
+            <svg class="input-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <input id="media-url" name="url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=xvFZjo5PgG0" autocomplete="url" autocapitalize="off" spellcheck="false" required>
+            <button id="paste-btn" class="paste-button" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="5" y="5" width="15" height="16" rx="2"/><path d="M9 5V3h7v2M9 11h7m-7 4h5"/></svg> <span>Paste</span></button>
+          </div>
+
+          <div class="conversion-controls-row">
+            <div class="settings-grid">
+              <div class="field-group" data-picker="format">
+              <label class="control-heading" id="format-label" for="format">Format</label>
+              <select class="native-state-select" id="format" name="format" tabindex="-1" aria-hidden="true"><option value="MP3">MP3</option><option value="MP4">MP4</option><option value="M4A">M4A</option><option value="WebM">WebM</option></select>
+              <button class="dropdown-trigger" id="format-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="format-label format-selection" aria-controls="format-options"><span class="dropdown-leading-icon"><svg id="format-type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V6l12-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span><span class="dropdown-value" id="format-selection">MP3</span><svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+              <div class="dropdown-menu" id="format-options" role="listbox" aria-labelledby="format-label" hidden></div>
+            </div>
+              <div class="field-group" data-picker="quality">
+              <label class="control-heading" id="quality-label" for="quality">Audio quality</label>
+              <select class="native-state-select" id="quality" name="quality" tabindex="-1" aria-hidden="true"></select>
+              <button class="dropdown-trigger" id="quality-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="quality-label quality-selection" aria-controls="quality-options"><span class="dropdown-leading-icon"><svg id="quality-type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13v-2m4 6V7m4 13V4m4 13V7m4 6v-2"/></svg></span><span class="dropdown-value" id="quality-selection">192 kbps</span><svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+              <div class="dropdown-menu" id="quality-options" role="listbox" aria-labelledby="quality-label" hidden></div>
+              </div>
+            </div>
+            <button type="submit" class="convert-button" id="convert-btn"><span class="rip-label">Rip!</span><img src="./rip-icon.svg" class="rip-icon" alt="" aria-hidden="true"></button>
+          </div>
+          <div class="inline-info" id="inline-info" role="status" aria-live="polite" aria-atomic="true"><span id="status-message"></span><button type="button" id="cancel-job" class="cancel-job" hidden>Cancel</button></div>
+        </form>
+        <a id="download-link" href="#" hidden aria-hidden="true" tabindex="-1"></a>
+      </div>
+
+      <section class="support-card" id="support" aria-label="Support Riplet">
+        <button class="support-card-open" id="support-card-open" type="button" aria-haspopup="dialog" aria-controls="support-sheet">
+          <strong>Like what we do?</strong>
+          <span>Please buy me a coffee to help keep this site ad-free.</span>
+        </button>
+        <a class="support-coffee-link" data-ko-fi-link href="https://ko-fi.com/riplet" target="_blank" rel="noopener noreferrer">Buy me a coffee <span aria-hidden="true">↗</span></a>
+      </section>
+    </section>
+
+    <div class="support-backdrop" id="support-backdrop" hidden></div>
+    <section class="support-sheet" id="support-sheet" role="dialog" aria-modal="true" aria-labelledby="support-sheet-title" hidden>
+      <div class="support-sheet-handle" id="support-sheet-handle" aria-hidden="true"><span></span></div>
+      <button class="support-sheet-close" id="support-sheet-close" type="button" aria-label="Close support menu">×</button>
+      <div class="support-sheet-content">
+        <div class="support-screen" id="support-screen-info">
+          <h2 id="support-sheet-title">Support Riplet</h2>
+          <p class="support-sheet-intro">Riplet is free and ad-free. Your support helps keep it that way and unlocks more for you.</p>
+          <div class="support-limits" aria-label="Free and supporter features">
+            <div class="support-limits-head"><span>Limits</span><span>Free</span><span>Supporter</span></div>
+            <div><span>Audio length</span><span>4 hours</span><span>12 hours</span></div>
+            <div><span>Video length</span><span>1.5 hours</span><span>4 hours</span></div>
+            <div><span>Audio quality</span><span>Up to 128 kbps</span><span>Up to 320 kbps</span></div>
+            <div><span>Video quality</span><span>Up to 720p</span><span>Up to 4K</span></div>
+            <div><span>WAV lossless</span><span>—</span><span>✓</span></div>
+            <div><span>Conversion speed</span><span>Normal</span><span>Faster</span></div>
+            <div><span>Ads</span><span>None</span><span>None</span></div>
+            <div><span>Account needed</span><span>No</span><span>No</span></div>
+          </div>
+          <p class="support-term">$5 in support unlocks 15 days of full access.</p>
+          <p class="support-email-note">Use an email you can check. Your activation key will arrive there.</p>
+          <a class="support-primary" data-ko-fi-link href="https://ko-fi.com/riplet" target="_blank" rel="noopener noreferrer">Buy me a coffee ↗</a>
+          <button class="support-text-button" id="support-show-activate" type="button">Already have a key? Activate it</button>
+        </div>
+        <div class="support-screen" id="support-screen-activate" hidden>
+          <button class="support-back" id="support-back" type="button">‹ Back</button>
+          <h2>Activate your key</h2>
+          <p class="support-sheet-intro">Paste the key from your email. It's a one-time step per browser.</p>
+          <form id="support-activate-form" class="support-key-form">
+            <label class="sr-only" for="support-key">Activation key</label>
+            <input id="support-key" type="text" placeholder="RP-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+            <button type="submit">Activate</button>
+          </form>
+          <p class="support-feedback" id="support-feedback" role="status" aria-live="polite"></p>
+          <div class="support-divider"></div>
+          <p>Not a supporter yet? <a data-ko-fi-link href="https://ko-fi.com/riplet" target="_blank" rel="noopener noreferrer">Support Riplet on Ko-fi</a> and we'll email your key.</p>
+          <button class="support-text-button" id="support-lost-key" type="button">Lost your key?</button>
+          <form id="support-resend-form" class="support-key-form support-resend-form" hidden>
+            <label class="sr-only" for="support-email">Your payment email</label>
+            <input id="support-email" type="email" placeholder="The email you used" autocomplete="email" required>
+            <button type="submit">Resend key</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <div class="ad-slot" id="ad-slot" hidden aria-label="Advertisement"><span>Advertisement</span><div id="ad-container"></div></div>
+
+    <div class="lower-wrap">
+      <section class="info content-width" id="how-it-works">
+        <div class="section-intro"><h2>Yes. Its As Simple As...</h2></div>
+        <div class="step-grid">
+          <article class="step-card"><span class="step-number">01</span><span class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.5.5l2.8-2.8A5 5 0 0 0 13.2 3.6L11.6 5.2M14 11a5 5 0 0 0-7.5-.5l-2.8 2.8a5 5 0 0 0 7.1 7.1l1.6-1.6"/></svg></span><h3>Paste</h3><p>Paste the video link you want to convert.</p></article>
+          <article class="step-card"><span class="step-number">02</span><span class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none"/></svg></span><h3>Tune</h3><p>Choose your format and quality.</p></article>
+          <article class="step-card"><span class="step-number">03</span><span class="step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/></svg></span><h3>Rip!</h3><p>Hit Rip! The download starts automatically once processing finishes.</p></article>
+        </div>
+      </section>
+      <section class="faq-section content-width" id="faq">
+        <div class="section-intro"><span class="section-label">QUESTIONS?</span><h2>Good to know.</h2></div>
+        <div class="faq-list">
+          <details><summary>What formats does Riplet support?<span class="plus-icon" aria-hidden="true">+</span></summary><p>Free conversions include MP3, MP4, M4A and WebM, with audio up to 128 kbps, video up to 720p, 4-hour audio and 1.5-hour video. Supporters also get WAV, audio up to 320 kbps, video up to 4K, 12-hour audio and 4-hour video.</p></details>
+          <details><summary>Which audio quality should I choose?<span class="plus-icon" aria-hidden="true">+</span></summary><p>128 kbps is compact and good for spoken audio. Supporters can select 192 or 320 kbps, though that cannot improve the original source quality.</p></details>
+          <details><summary>Does Riplet work on my phone?<span class="plus-icon" aria-hidden="true">+</span></summary><p>The website works on modern phones, tablets, and computers. Safari may require an extra tap to save a finished download.</p></details>
+          <details><summary>Why did my conversion fail?<span class="plus-icon" aria-hidden="true">+</span></summary><p>A URL may be unavailable, restricted or unsupported. Temporary service issues can also prevent a conversion.</p></details>
+        </div>
+      </section>
+    </div>
+  </main>
+  <footer class="site-footer"><div class="footer-inner content-width"><div class="footer-identity"><a href="#top" class="footer-brand">riplet<span>.</span></a><p>Good tools should feel effortless.</p></div><div class="footer-links"><a href="#how-it-works">How it works</a><a href="#faq">FAQ</a><a href="./privacy.html">Privacy</a><a href="./terms.html">Terms</a></div></div><div class="footer-bottom content-width"><span>© <span id="year">2026</span> Riplet</span><span>Independent media conversion interface</span></div></footer>
+  <script src="./config.js"></script><script defer src="./script.js"></script>
+</body>
+</html>

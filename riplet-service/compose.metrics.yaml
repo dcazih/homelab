@@ -1,0 +1,8 @@
+# Merge with the existing Riplet compose file. Keep the metrics directory on the NAS.
+services:
+  youtube-converter:
+    environment:
+      METRICS_DB_PATH: /metrics/metrics.sqlite
+      RIPLET_ADMIN_TOKEN: ${RIPLET_ADMIN_TOKEN:?Set a private admin token}
+    volumes:
+      - ../data/metrics:/metrics

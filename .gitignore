@@ -45,3 +45,5 @@ Geist,Geist_Mono,Instrument_Serif,Inter/
 music-profiles-bridge/
 **/*.backup
 setup_prompt.md
+
+riplet-admin-token.txt
